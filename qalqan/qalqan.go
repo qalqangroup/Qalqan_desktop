@@ -285,7 +285,7 @@ func DecryptOFB(data []uint8, rkey []uint8, klen int, blen int, res []uint8) {
 	copy(res, InvAddRk(block2[:], rkey, 0, blen))
 }
 
-/* Функция осуществляет дополнение нулями до значяния кратного 16 */
+/* Функция осуществляет дополнение нулями до значения кратного 16 */
 func myappend(buf []byte, len int) {
 	add_len := BLOCKLEN - len
 	if add_len == 0 {

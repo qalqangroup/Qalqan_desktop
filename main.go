@@ -126,14 +126,22 @@ func useAndDeleteCircleKey() []uint8 {
 		return nil
 	}
 	key := circle_keys[0][0][:qalqan.DEFAULT_KEY_LEN]
+	copy(key, circle_keys[0][0][:])
 	rkey := make([]uint8, qalqan.EXPKLEN)
 	qalqan.Kexp(key, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rkey)
 	for i := 0; i < qalqan.DEFAULT_KEY_LEN; i++ {
 		circle_keys[0][0][i] = 0
 	}
-	copy(circle_keys[0][:], circle_keys[0][1:])
+	copy(circle_keys[0][:len(circle_keys[0])-1], circle_keys[0][1:])
 	circle_keys[0][len(circle_keys[0])-1] = [qalqan.DEFAULT_KEY_LEN]byte{}
-	if circle_keys[0][0] == [32]byte{} {
+	empty := true
+	for _, k := range circle_keys[0] {
+		if k != [qalqan.DEFAULT_KEY_LEN]byte{} {
+			empty = false
+			break
+		}
+	}
+	if empty {
 		circle_keys = circle_keys[1:]
 	}
 	return rkey
@@ -224,6 +232,7 @@ func main() {
 			if !bytes.Equal(rimit, imitFile) {
 				logOutput.SetText("The file is corrupted")
 			}
+			circle_keys = make([][10][qalqan.DEFAULT_KEY_LEN]byte, 1)
 			qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
 			qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
 			fmt.Println("Session keys loaded successfully")
@@ -375,7 +384,15 @@ func main() {
 				return
 			}
 
-			rKey := useAndDeleteSessionKey()
+			/*
+				rKey := useAndDeleteSessionKey() // test use of encryption on session keys
+				if rKey == nil {
+					logOutput.SetText("No session key available for encryption.")
+					return
+				}
+			*/
+			fmt.Println("circle_keys:", circle_keys)
+			rKey := useAndDeleteCircleKey()
 			if rKey == nil {
 				logOutput.SetText("No session key available for encryption.")
 				return
@@ -403,7 +420,7 @@ func main() {
 				logOutput.SetText("File successfully encrypted and saved!")
 			}, myWindow)
 
-			saveDialog.SetFileName("encrypted_file.bin")
+			saveDialog.SetFileName("encrypted_file.qln")
 			saveDialog.Show()
 		}, myWindow)
 		fileDialog.Show()
@@ -434,13 +451,19 @@ func main() {
 
 			iv := data[:qalqan.BLOCKLEN]
 			encryptedData := data[qalqan.BLOCKLEN:]
+			/*
+				rKey := useAndDeleteSessionKey() // test use of decryption on session keys
+				if rKey == nil {
+					logOutput.SetText("No session key available for decryption.")
+					return
+				}
+			*/
 
-			rKey := useAndDeleteSessionKey()
+			rKey := useAndDeleteCircleKey() // test use of decryption on session keys
 			if rKey == nil {
 				logOutput.SetText("No session key available for decryption.")
 				return
 			}
-
 			ostream := bytes.NewBuffer(encryptedData)
 			sstream := &bytes.Buffer{}
 
@@ -472,11 +495,11 @@ func main() {
 				logOutput.SetText("File successfully decrypted and saved!")
 			}, myWindow)
 
-			saveDialog.SetFileName("decrypted_file.bin")
+			saveDialog.SetFileName("decrypted_file.txt")
 			saveDialog.Show()
 		}, myWindow)
 
-		fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
+		fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".qln"}))
 		fileDialog.Show()
 	})
 
