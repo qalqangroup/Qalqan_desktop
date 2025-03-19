@@ -12,7 +12,7 @@ data2 := make([]uint8, 16)
 
 qalqan.Kexp(key, 32, 16, rkey111)
 qalqan.Encrypt(data, rkey111, 32, 16, res)  // [255 247 218 248 163 247 226 11 36 110 25 52 4 11 163 120] - etalon encrypted data
-qalqan.Decrypt(res, rkey111, 32, 16, data2) // [16 17 34 51 68 85 102 119 136 153 170 187 204 221 238 255] - etalon decrypted data*/
+qalqan.DecryptOFB(res, rkey111, 32, 16, data2) // [16 17 34 51 68 85 102 119 136 153 170 187 204 221 238 255] - etalon decrypted data*/
 
 import (
 	"fmt"
