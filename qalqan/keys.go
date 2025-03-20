@@ -62,9 +62,9 @@ func LoadSessionKeys(data []byte, ostream *bytes.Buffer, rKey []byte, session_ke
 	}
 }
 
-func LoadCircleKeys(data []byte, ostream *bytes.Buffer, rKey []byte, circle_keys *[][10][32]byte) {
+func LoadCircleKeys(data []byte, ostream *bytes.Buffer, rKey []byte, circle_keys *[10][32]byte) {
 	readCircleKey := make([]byte, DEFAULT_KEY_LEN)
-	*circle_keys = make([][10][32]byte, 1)
+	*circle_keys = [10][32]byte{}
 	for i := 0; i < 10; i++ {
 		n, err := ostream.Read(readCircleKey[:DEFAULT_KEY_LEN])
 		if err != nil {
@@ -78,6 +78,6 @@ func LoadCircleKeys(data []byte, ostream *bytes.Buffer, rKey []byte, circle_keys
 		for j := 0; j < DEFAULT_KEY_LEN; j += BLOCKLEN {
 			DecryptOFB(readCircleKey[j:j+BLOCKLEN], rKey, DEFAULT_KEY_LEN, BLOCKLEN, readCircleKey[j:j+BLOCKLEN])
 		}
-		copy((*circle_keys)[0][i][:], readCircleKey[:])
+		copy((*circle_keys)[i][:], readCircleKey[:])
 	}
 }

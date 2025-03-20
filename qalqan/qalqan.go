@@ -339,7 +339,18 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 			sstream.Write(cipherBuf)
 		}
 	}
-	if modLen != 0 {
+	if modLen < BLOCKLEN {
+		sstream.Write(iv)
+		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
+		copy(cipherBuf, tmpBuf)
+		ostream.Read(clearBuf)
+		myappend(clearBuf, int(modLen))
+		for i := range BLOCKLEN {
+			cipherBuf[i] = cipherBuf[i] ^ clearBuf[i]
+		}
+		sstream.Write(cipherBuf)
+	}
+	if modLen != 0 && modLen > BLOCKLEN {
 		sstream.Write(iv)
 		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 		copy(cipherBuf, tmpBuf)
@@ -368,47 +379,44 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 	}
 }
 
-func DecryptOFB_File(dataLen uint64, rKey []byte, iv []byte, ostream io.Reader, sstream io.Writer) error {
-	if len(iv) != BLOCKLEN {
-		return fmt.Errorf("invalid IV length: expected %d, got %d", BLOCKLEN, len(iv))
-	}
-
+func DecryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sstream io.Writer) error {
 	modLen := dataLen % BLOCKLEN
-	buf := make([]byte, BLOCKLEN)
-	cypherbuf := make([]byte, BLOCKLEN)
+	tmpBuf := make([]byte, BLOCKLEN)
+	cipherBuf := make([]byte, BLOCKLEN)
+	clearBuf := make([]byte, BLOCKLEN)
 
-	DecryptOFB(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf)
+	Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 
-	for i := uint64(0); i < dataLen-modLen; i += BLOCKLEN {
-		n, err := io.ReadFull(ostream, buf)
-		if err != nil {
-			return fmt.Errorf("failed to read encrypted data: %w", err)
-		}
-		if n != BLOCKLEN {
-			return fmt.Errorf("unexpected EOF while reading encrypted data")
+	for i := 0; i < dataLen-modLen; i += BLOCKLEN {
+		if _, err := io.ReadFull(ostream, cipherBuf); err != nil {
+			return fmt.Errorf("failed to read ciphertext: %w", err)
 		}
 
-		DecryptOFB(buf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf)
-		_, err = sstream.Write(cypherbuf)
-		if err != nil {
+		for j := 0; j < BLOCKLEN; j++ {
+			clearBuf[j] = cipherBuf[j] ^ tmpBuf[j]
+		}
+
+		if _, err := sstream.Write(clearBuf); err != nil {
 			return fmt.Errorf("failed to write decrypted data: %w", err)
 		}
+
+		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 	}
 
 	if modLen > 0 {
 		partialBuf := make([]byte, BLOCKLEN)
-		n, err := ostream.Read(partialBuf[:modLen])
+		_, err := io.ReadFull(ostream, partialBuf[:modLen])
 		if err != nil {
 			return fmt.Errorf("failed to read final block: %w", err)
 		}
 
-		for i := n; i < BLOCKLEN; i++ {
-			partialBuf[i] = 0
+		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
+
+		for j := 0; j < modLen; j++ {
+			clearBuf[j] = partialBuf[j] ^ tmpBuf[j]
 		}
 
-		DecryptOFB(partialBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf)
-		_, err = sstream.Write(cypherbuf[:modLen])
-		if err != nil {
+		if _, err := sstream.Write(clearBuf[:modLen]); err != nil {
 			return fmt.Errorf("failed to write final decrypted block: %w", err)
 		}
 	}
