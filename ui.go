@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -17,6 +18,27 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
+
+func animateResize(w fyne.Window, newSize fyne.Size) {
+	oldSize := w.Canvas().Size()
+
+	stepCount := 10
+	delay := 20 * time.Millisecond
+
+	widthStep := (newSize.Width - oldSize.Width) / float32(stepCount)
+	heightStep := (newSize.Height - oldSize.Height) / float32(stepCount)
+
+	go func() {
+		for i := 0; i < stepCount; i++ {
+			time.Sleep(delay)
+			w.Resize(fyne.NewSize(
+				oldSize.Width+widthStep*float32(i),
+				oldSize.Height+heightStep*float32(i),
+			))
+		}
+		w.Resize(newSize)
+	}()
+}
 
 func useAndDeleteSessionKey() []uint8 {
 	if len(session_keys) == 0 || len(session_keys[0]) == 0 {
@@ -44,7 +66,6 @@ func useAndDeleteCircleKey(randomNum int) []uint8 {
 		return nil
 	}
 	key := circle_keys[randomNum][:qalqan.DEFAULT_KEY_LEN]
-	//copy(key, circle_keys[randomNum][:])
 	rkey := make([]uint8, qalqan.EXPKLEN)
 	qalqan.Kexp(key, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rkey)
 	return rkey
@@ -52,6 +73,7 @@ func useAndDeleteCircleKey(randomNum int) []uint8 {
 
 var session_keys [][100][qalqan.DEFAULT_KEY_LEN]byte
 var circle_keys [10][qalqan.DEFAULT_KEY_LEN]byte
+var sessionKeyCount int = 100
 
 func InitUI(w fyne.Window) {
 
@@ -71,18 +93,15 @@ func InitUI(w fyne.Window) {
 	logs.Wrapping = fyne.TextWrapWord
 	logs.Scroll = container.ScrollBoth
 
-	logs.Resize(fyne.NewSize(800, 150))
-	logsContainer := container.NewGridWrap(fyne.NewSize(800, 150), logs)
+	logs.Resize(fyne.NewSize(400, 150))
 
 	rKey := make([]uint8, qalqan.EXPKLEN)
 
-	selectSource := widget.NewSelect([]string{"File", "Key"}, nil)
+	selectSource := widget.NewSelect([]string{"	      File", "	      Key"}, nil)
 	selectSource.PlaceHolder = "Select source of key"
 
-	passwordEntry := widget.NewEntry()
-	passwordEntry.SetPlaceHolder("Enter a password")
-
-	spacer1 := widget.NewLabel(" ")
+	passwordEntry := widget.NewPasswordEntry()
+	passwordEntry.SetPlaceHolder("    Enter a password...")
 
 	hashLabel := widget.NewLabelWithStyle(
 		"Hash of Key",
@@ -92,14 +111,27 @@ func InitUI(w fyne.Window) {
 
 	hashValue := widget.NewEntry()
 	hashValue.Disable()
-	hashValue.Resize(fyne.NewSize(400, 40))
 
 	hashContainer := container.NewVBox(
+		layout.NewSpacer(),
 		hashLabel,
-		hashValue,
+		container.NewCenter(
+			container.NewGridWrap(fyne.NewSize(515, 40), hashValue),
+		),
+		layout.NewSpacer(),
 	)
 
-	spacer2 := widget.NewLabel(" ")
+	sessionKeys := widget.NewRadioGroup([]string{"Session Keys"}, nil)
+
+	keysLeftEntry := widget.NewEntry()
+	keysLeftEntry.SetPlaceHolder("Keys left")
+	keysLeftEntry.Disable()
+	smallKeysLeftEntry := container.NewCenter(container.NewGridWrap(fyne.NewSize(170, 40), keysLeftEntry))
+
+	leftContainer := container.NewVBox(
+		container.NewCenter(sessionKeys),
+		smallKeysLeftEntry,
+	)
 
 	okButton := widget.NewButton("OK", func() {
 		password := passwordEntry.Text
@@ -107,6 +139,9 @@ func InitUI(w fyne.Window) {
 			dialog.ShowInformation("Error", "Enter a password!", w)
 			return
 		}
+		sessionKeyCount = 100
+		keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
+
 		logs.SetText("Password entered: " + password)
 		fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 			if err != nil {
@@ -165,28 +200,151 @@ func InitUI(w fyne.Window) {
 		fileDialog.Show()
 	})
 
-	customMessage := widget.NewRadioGroup([]string{"Custom Message"}, nil)
+	iconClear, err := fyne.LoadResourceFromPath("assets/clear.jpg")
+	if err != nil {
+		fmt.Println("Ошибка загрузки иконки:", err)
+		iconClear = theme.CancelIcon()
+	}
 
-	topRow := container.NewGridWithColumns(4,
-		selectSource,
-		passwordEntry,
-		okButton,
-		customMessage,
+	clearLogsButton := container.NewGridWrap(fyne.NewSize(120, 40),
+		widget.NewButtonWithIcon(
+			"Clear",
+			iconClear,
+			func() {
+				logs.SetText("")
+				fmt.Println("Логи очищены")
+			},
+		),
+	)
+	centeredButton := container.NewCenter(clearLogsButton)
+
+	logsContainer := container.NewVBox(
+		logs,
+		centeredButton,
 	)
 
-	sessionKeys := widget.NewRadioGroup([]string{"Session Keys"}, nil)
-	keysLeftEntry := widget.NewEntry()
-	keysLeftEntry.SetPlaceHolder("Keys left")
+	fromEntry := widget.NewEntry()
+	fromEntry.SetPlaceHolder("From")
+	fromEntry.Hide()
 
-	leftContainer := container.NewVBox(sessionKeys, keysLeftEntry)
+	toEntry := widget.NewEntry()
+	toEntry.SetPlaceHolder("To")
+	toEntry.Hide()
 
-	keyTypeLabel := widget.NewLabelWithStyle(
-		"Key Type",
-		fyne.TextAlignCenter,
-		fyne.TextStyle{Bold: false},
+	dateEntry := widget.NewEntry()
+	dateEntry.SetPlaceHolder("Date")
+	dateEntry.Hide()
+
+	regEntry := widget.NewEntry()
+	regEntry.SetPlaceHolder("Registration No.")
+	regEntry.Hide()
+
+	tableBar := container.NewGridWithColumns(4,
+		fromEntry,
+		toEntry,
+		dateEntry,
+		regEntry,
 	)
 
-	centeredKeyTypeLabel := container.NewCenter(keyTypeLabel)
+	outputLabel := widget.NewMultiLineEntry()
+	outputLabel.SetMinRowsVisible(6)
+	outputLabel.Disable()
+
+	updateOutput := func() {
+		outputLabel.SetText(
+			"From: " + fromEntry.Text + "\n" +
+				"To: " + toEntry.Text + "\n" +
+				"Date: " + dateEntry.Text + "\n" +
+				"Registration No.: " + regEntry.Text,
+		)
+	}
+
+	fromEntry.OnChanged = func(string) { updateOutput() }
+	toEntry.OnChanged = func(string) { updateOutput() }
+	dateEntry.OnChanged = func(string) { updateOutput() }
+	regEntry.OnChanged = func(string) { updateOutput() }
+
+	updateOutput()
+
+	messageSend := widget.NewMultiLineEntry()
+	messageSend.SetPlaceHolder("Your message...")
+	messageSend.Enable()
+	messageSend.Wrapping = fyne.TextWrapWord
+	messageSend.Scroll = container.ScrollBoth
+	messageSend.Resize(fyne.NewSize(500, 150))
+	messageSend.Hide()
+
+	iconEncrMessage, err := fyne.LoadResourceFromPath("assets/encryptMessage.png")
+	if err != nil {
+		fmt.Println("Ошибка загрузки иконки:", err)
+		iconEncrMessage = theme.CancelIcon()
+	}
+
+	createdMessageButton := widget.NewButtonWithIcon(
+		"Encrypt a message",
+		iconEncrMessage,
+		func() {
+			messageSend.SetText("")
+			fmt.Println("Очищено")
+
+			dialog.ShowInformation("Success", "Message encrypted successfully!", w)
+		},
+	)
+
+	createdMessageButton.Hide()
+	centeredButtonMessage := container.NewCenter(createdMessageButton)
+
+	messageContainer := container.NewVBox(
+		messageSend,
+		centeredButtonMessage,
+	)
+
+	customMessage := widget.NewRadioGroup([]string{"Custom Message"}, func(selected string) {
+		isEnabled := selected == "Custom Message"
+
+		if isEnabled {
+			fromEntry.Show()
+			toEntry.Show()
+			dateEntry.Show()
+			regEntry.Show()
+			messageSend.Show()
+			createdMessageButton.Show()
+			animateResize(w, fyne.NewSize(675, 650))
+		} else {
+			fromEntry.Hide()
+			toEntry.Hide()
+			dateEntry.Hide()
+			regEntry.Hide()
+			messageSend.Hide()
+			createdMessageButton.Hide()
+			animateResize(w, fyne.NewSize(600, 300))
+		}
+	})
+
+	modeExperts := widget.NewRadioGroup([]string{"Mode (for experts)"}, nil)
+	selectModeEntry := widget.NewSelect(
+		[]string{"	      OFB", "	      ECB"},
+		func(selected string) {
+			fmt.Println("Выбран режим:", selected)
+		},
+	)
+
+	selectModeEntry.PlaceHolder = "         Select mode"
+
+	smallSelectModeEntry := container.NewCenter(container.NewGridWrap(fyne.NewSize(170, 40), selectModeEntry))
+
+	rightContainer := container.NewVBox(
+		container.NewCenter(modeExperts),
+		smallSelectModeEntry,
+	)
+
+	topRow := container.NewHBox(
+		layout.NewSpacer(),
+		container.NewGridWrap(fyne.NewSize(170, 40), selectSource),
+		container.NewGridWrap(fyne.NewSize(180, 40), passwordEntry),
+		container.NewGridWrap(fyne.NewSize(65, 40), okButton),
+		layout.NewSpacer(),
+	)
 
 	keyTypeSelect := widget.NewSelect(
 		[]string{"Circular", "Session"},
@@ -198,23 +356,17 @@ func InitUI(w fyne.Window) {
 	keyTypeSelect.PlaceHolder = "Select key type"
 
 	centerContainer := container.NewVBox(
-		centeredKeyTypeLabel,
-		keyTypeSelect,
+		container.NewCenter(customMessage),
+		container.NewCenter(container.NewGridWrap(fyne.NewSize(170, 40), keyTypeSelect)),
 	)
 
-	modeExperts := widget.NewRadioGroup([]string{"Mode (for experts)"}, nil)
-	selectModeEntry := widget.NewEntry()
-	selectModeEntry.SetPlaceHolder("Select mode")
-
-	rightContainer := container.NewVBox(modeExperts, selectModeEntry)
-
-	sessionModeContainer := container.NewGridWithColumns(3,
+	sessionModeContainer := container.NewHBox(
+		layout.NewSpacer(),
 		leftContainer,
 		centerContainer,
 		rightContainer,
+		layout.NewSpacer(),
 	)
-
-	spacer3 := widget.NewLabel(" ")
 
 	iconEncrypt, err := fyne.LoadResourceFromPath("assets/encrypt.png")
 	if err != nil {
@@ -226,7 +378,10 @@ func InitUI(w fyne.Window) {
 		"Encrypt a file",
 		iconEncrypt,
 		func() {
-			//fmt.Println("Нажата кнопка Encrypt")
+			if len(session_keys) == 0 || len(session_keys[0]) == 0 {
+				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), w)
+				return
+			}
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
 					logs.SetText("Error opening file: " + err.Error())
@@ -266,7 +421,8 @@ func InitUI(w fyne.Window) {
 					}
 				*/
 				fmt.Println("circle_keys:", circle_keys)
-				randomNum := rand.Intn(10)
+				randomNum := 8 //rand.Intn(10)
+				fmt.Println("Key's number:", randomNum)
 				rKey := useAndDeleteCircleKey(randomNum)
 				if rKey == nil {
 					logs.SetText("No session key available for encryption.")
@@ -291,7 +447,10 @@ func InitUI(w fyne.Window) {
 						logs.SetText("Failed to save encrypted file: " + err.Error())
 						return
 					}
-
+					if sessionKeyCount > 0 {
+						sessionKeyCount--
+						keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
+					}
 					logs.SetText("File successfully encrypted and saved!")
 				}, w)
 
@@ -300,8 +459,6 @@ func InitUI(w fyne.Window) {
 			}, w)
 			fileDialog.Show()
 		})
-
-	encryptButton.Resize(fyne.NewSize(300, 100))
 
 	iconDecrypt, err := fyne.LoadResourceFromPath("assets/decrypt.png")
 	if err != nil {
@@ -313,6 +470,10 @@ func InitUI(w fyne.Window) {
 		"Decrypt a file",
 		iconDecrypt,
 		func() {
+			if len(session_keys) == 0 || len(session_keys[0]) == 0 {
+				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), w)
+				return
+			}
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
 					logs.SetText("Error opening file: " + err.Error())
@@ -345,7 +506,7 @@ func InitUI(w fyne.Window) {
 					}
 				*/
 
-				rKey := useAndDeleteCircleKey(1) // test use of decryption on session keys
+				rKey := useAndDeleteCircleKey(8) // test use of decryption on session keys
 				if rKey == nil {
 					logs.SetText("No session key available for decryption.")
 					return
@@ -389,125 +550,24 @@ func InitUI(w fyne.Window) {
 			fileDialog.Show()
 		},
 	)
-	decryptButton.Resize(fyne.NewSize(300, 100))
 
 	buttonContainer := container.NewHBox(
 		layout.NewSpacer(),
 		encryptButton,
-		layout.NewSpacer(),
 		decryptButton,
 		layout.NewSpacer(),
-	)
-
-	spacer4 := widget.NewLabel(" ")
-
-	iconClear, err := fyne.LoadResourceFromPath("assets/clear.jpg")
-	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
-		iconClear = theme.CancelIcon()
-	}
-
-	clearLogsButton := container.NewGridWrap(fyne.NewSize(100, 35),
-		widget.NewButtonWithIcon(
-			"Clear",
-			iconClear,
-			func() {
-				logs.SetText("")
-				fmt.Println("Логи очищены")
-			},
-		),
-	)
-
-	centeredButton := container.NewCenter(clearLogsButton)
-
-	spacer5 := widget.NewLabel(" ")
-
-	logsContainer = container.NewVBox(
-		logsContainer,
-		centeredButton,
-	)
-
-	fromEntry := widget.NewEntry()
-	fromEntry.SetPlaceHolder("From")
-
-	toEntry := widget.NewEntry()
-	toEntry.SetPlaceHolder("To")
-
-	dateEntry := widget.NewEntry()
-	dateEntry.SetPlaceHolder("Date")
-
-	regEntry := widget.NewEntry()
-	regEntry.SetPlaceHolder("Registration No.")
-
-	tableBar := container.NewGridWithColumns(4,
-		fromEntry,
-		toEntry,
-		dateEntry,
-		regEntry,
-	)
-
-	outputLabel := widget.NewMultiLineEntry()
-	outputLabel.SetMinRowsVisible(6)
-	outputLabel.Disable()
-
-	updateOutput := func() {
-		outputLabel.SetText(
-			"From: " + fromEntry.Text + "\n" +
-				"To: " + toEntry.Text + "\n" +
-				"Date: " + dateEntry.Text + "\n" +
-				"Registration No.: " + regEntry.Text,
-		)
-	}
-
-	fromEntry.OnChanged = func(string) { updateOutput() }
-	toEntry.OnChanged = func(string) { updateOutput() }
-	dateEntry.OnChanged = func(string) { updateOutput() }
-	regEntry.OnChanged = func(string) { updateOutput() }
-
-	updateOutput()
-
-	messageSend := widget.NewMultiLineEntry()
-	messageSend.SetPlaceHolder("Your message...")
-	messageSend.Enable()
-	messageSend.Wrapping = fyne.TextWrapWord
-	messageSend.Scroll = container.ScrollBoth
-
-	messageSend.Resize(fyne.NewSize(800, 150))
-
-	iconEncrMessage, err := fyne.LoadResourceFromPath("assets/encryptMessage.png")
-	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
-		iconEncrMessage = theme.CancelIcon()
-	}
-
-	clearMessageButton := widget.NewButtonWithIcon(
-		"Encrypt message",
-		iconEncrMessage,
-		func() {
-			messageSend.SetText("")
-			fmt.Println("Очищено")
-		},
-	)
-
-	centeredButtonMessage := container.NewCenter(clearMessageButton)
-
-	messageContainer := container.NewVBox(
-		messageSend,
-		centeredButtonMessage,
 	)
 
 	mainUI := container.NewVBox(
 		widget.NewLabel(" "),
 		topRow,
-		spacer1,
 		hashContainer,
-		spacer2,
 		sessionModeContainer,
-		spacer3,
+		widget.NewLabel(" "),
 		buttonContainer,
-		spacer4,
+		widget.NewLabel(" "),
 		logsContainer,
-		spacer5,
+		widget.NewLabel(" "),
 		tableBar,
 		messageContainer,
 	)

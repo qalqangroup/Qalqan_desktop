@@ -7,8 +7,8 @@ import (
 
 func main() {
 	myApp := app.New()
-	myWindow := myApp.NewWindow("QalqanDS")
-	myWindow.Resize(fyne.NewSize(675, 790))
+	myWindow := myApp.NewWindow("Qalqan_DS")
+	myWindow.Resize(fyne.NewSize(600, 300))
 	myWindow.CenterOnScreen()
 	myWindow.SetFixedSize(false)
 	InitUI(myWindow)
