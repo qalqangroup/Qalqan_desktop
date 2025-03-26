@@ -97,14 +97,14 @@ func InitUI(w fyne.Window) {
 
 	rKey := make([]uint8, qalqan.EXPKLEN)
 
-	selectSource := widget.NewSelect([]string{"	      File", "	      Key"}, nil)
+	selectSource := widget.NewSelect([]string{"File", "Key"}, nil)
 	selectSource.PlaceHolder = "Select source of key"
 
 	passwordEntry := widget.NewPasswordEntry()
-	passwordEntry.SetPlaceHolder("    Enter a password...")
+	passwordEntry.SetPlaceHolder("Enter a password...")
 
 	hashLabel := widget.NewLabelWithStyle(
-		"Hash of Key",
+		"Hash of key",
 		fyne.TextAlignCenter,
 		fyne.TextStyle{Bold: true},
 	)
@@ -115,13 +115,12 @@ func InitUI(w fyne.Window) {
 	hashContainer := container.NewVBox(
 		layout.NewSpacer(),
 		hashLabel,
-		container.NewCenter(
-			container.NewGridWrap(fyne.NewSize(515, 40), hashValue),
-		),
+		layout.NewSpacer(),
+		container.NewCenter(container.NewGridWrap(fyne.NewSize(515, 40), hashValue)),
 		layout.NewSpacer(),
 	)
 
-	sessionKeys := widget.NewRadioGroup([]string{"Session Keys"}, nil)
+	sessionKeys := widget.NewRadioGroup([]string{"Session keys"}, nil)
 
 	keysLeftEntry := widget.NewEntry()
 	keysLeftEntry.SetPlaceHolder("Keys left")
@@ -200,7 +199,7 @@ func InitUI(w fyne.Window) {
 		fileDialog.Show()
 	})
 
-	iconClear, err := fyne.LoadResourceFromPath("assets/clear.jpg")
+	iconClear, err := fyne.LoadResourceFromPath("assets/clear.png")
 	if err != nil {
 		fmt.Println("Ошибка загрузки иконки:", err)
 		iconClear = theme.CancelIcon()
@@ -208,7 +207,7 @@ func InitUI(w fyne.Window) {
 
 	clearLogsButton := container.NewGridWrap(fyne.NewSize(120, 40),
 		widget.NewButtonWithIcon(
-			"Clear",
+			"Clear log",
 			iconClear,
 			func() {
 				logs.SetText("")
@@ -299,8 +298,8 @@ func InitUI(w fyne.Window) {
 		centeredButtonMessage,
 	)
 
-	customMessage := widget.NewRadioGroup([]string{"Custom Message"}, func(selected string) {
-		isEnabled := selected == "Custom Message"
+	customMessage := widget.NewRadioGroup([]string{"Custom message"}, func(selected string) {
+		isEnabled := selected == "Custom message"
 
 		if isEnabled {
 			fromEntry.Show()
@@ -321,15 +320,22 @@ func InitUI(w fyne.Window) {
 		}
 	})
 
-	modeExperts := widget.NewRadioGroup([]string{"Mode (for experts)"}, nil)
 	selectModeEntry := widget.NewSelect(
-		[]string{"	      OFB", "	      ECB"},
+		[]string{"OFB", "ECB"},
 		func(selected string) {
 			fmt.Println("Выбран режим:", selected)
-		},
-	)
+		})
+	selectModeEntry.PlaceHolder = "Select mode"
+	selectModeEntry.Disable()
 
-	selectModeEntry.PlaceHolder = "         Select mode"
+	modeExperts := widget.NewRadioGroup([]string{"Mode (for experts)"}, func(selected string) {
+		if selected == "Mode (for experts)" {
+			selectModeEntry.Enable()
+		} else {
+			selectModeEntry.Disable()
+		}
+	})
+	modeExperts.SetSelected("")
 
 	smallSelectModeEntry := container.NewCenter(container.NewGridWrap(fyne.NewSize(170, 40), selectModeEntry))
 
@@ -341,7 +347,9 @@ func InitUI(w fyne.Window) {
 	topRow := container.NewHBox(
 		layout.NewSpacer(),
 		container.NewGridWrap(fyne.NewSize(170, 40), selectSource),
+		layout.NewSpacer(),
 		container.NewGridWrap(fyne.NewSize(180, 40), passwordEntry),
+		layout.NewSpacer(),
 		container.NewGridWrap(fyne.NewSize(65, 40), okButton),
 		layout.NewSpacer(),
 	)
@@ -363,7 +371,9 @@ func InitUI(w fyne.Window) {
 	sessionModeContainer := container.NewHBox(
 		layout.NewSpacer(),
 		leftContainer,
+		layout.NewSpacer(),
 		centerContainer,
+		layout.NewSpacer(),
 		rightContainer,
 		layout.NewSpacer(),
 	)
@@ -554,6 +564,7 @@ func InitUI(w fyne.Window) {
 	buttonContainer := container.NewHBox(
 		layout.NewSpacer(),
 		encryptButton,
+		layout.NewSpacer(),
 		decryptButton,
 		layout.NewSpacer(),
 	)
@@ -561,7 +572,9 @@ func InitUI(w fyne.Window) {
 	mainUI := container.NewVBox(
 		widget.NewLabel(" "),
 		topRow,
+		widget.NewLabel(" "),
 		hashContainer,
+		widget.NewLabel(" "),
 		sessionModeContainer,
 		widget.NewLabel(" "),
 		buttonContainer,
