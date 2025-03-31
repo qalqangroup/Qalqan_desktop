@@ -141,9 +141,9 @@ func InitUI(window fyne.Window) {
 	hashLabel := widget.NewLabelWithStyle("Hash of Key", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 
 	bgHash := canvas.NewRaster(func(w, h int) image.Image {
-		return roundedRect(510, 40, 4, color.White)
+		return roundedRect(470, 40, 4, color.White)
 	})
-	bgHash.SetMinSize(fyne.NewSize(510, 40))
+	bgHash.SetMinSize(fyne.NewSize(470, 40))
 
 	hashValue := widget.NewRichText(&widget.TextSegment{
 		Style: widget.RichTextStyleInline,
@@ -348,7 +348,7 @@ func InitUI(window fyne.Window) {
 	messageSend.Enable()
 	messageSend.Wrapping = fyne.TextWrapWord
 	messageSend.Scroll = container.ScrollBoth
-	messageSend.Resize(fyne.NewSize(500, 150))
+	messageSend.Resize(fyne.NewSize(470, 120))
 	messageSend.Hide()
 
 	iconEncrMessage, err := fyne.LoadResourceFromPath("assets/encryptMessage.png")
@@ -374,6 +374,7 @@ func InitUI(window fyne.Window) {
 	messageContainer := container.NewVBox(
 		messageSend,
 		centeredButtonMessage,
+		layout.NewSpacer(),
 	)
 
 	customMessage := widget.NewRadioGroup([]string{"Custom message"}, func(selected string) {
@@ -386,7 +387,7 @@ func InitUI(window fyne.Window) {
 			regEntry.Show()
 			messageSend.Show()
 			createdMessageButton.Show()
-			animateResize(window, fyne.NewSize(675, 650))
+			animateResize(window, fyne.NewSize(570, 380))
 		} else {
 			fromEntry.Hide()
 			toEntry.Hide()
@@ -394,7 +395,7 @@ func InitUI(window fyne.Window) {
 			regEntry.Hide()
 			messageSend.Hide()
 			createdMessageButton.Hide()
-			animateResize(window, fyne.NewSize(600, 300))
+			animateResize(window, fyne.NewSize(570, 300))
 		}
 	})
 
@@ -691,6 +692,8 @@ func InitUI(window fyne.Window) {
 
 				var fileTypeStr string
 				switch fileType {
+				case 0x00:
+					fileTypeStr = "File"
 				case 0x77:
 					fileTypeStr = "File"
 				case 0x88:
@@ -708,11 +711,24 @@ func InitUI(window fyne.Window) {
 					logs.Refresh()
 					return
 				}
+				keyGenerated := false
 
-				if keyType == 0x00 {
-					rKey = useAndDeleteCircleKey(circleKeyNumber)
-				} else {
-					rKey = useAndDeleteSessionKey(sessionKeyNumber)
+				if !keyGenerated {
+					switch keyType {
+					case 0x00:
+						rKey = useAndDeleteCircleKey(circleKeyNumber)
+					case 0x01:
+						rKey = useAndDeleteSessionKey(sessionKeyNumber)
+					default:
+						logs.Segments = []widget.RichTextSegment{}
+						logs.Segments = append(logs.Segments, &widget.TextSegment{
+							Text:  fmt.Sprintf("Ошибка: неизвестный тип ключа 0x%X", keyType),
+							Style: widget.RichTextStyleInline,
+						})
+						logs.Refresh()
+						return
+					}
+					keyGenerated = true
 				}
 
 				if rKey == nil {
@@ -739,7 +755,22 @@ func InitUI(window fyne.Window) {
 					}
 				}()
 
-				qalqan.DecryptOFB_File(len(encryptedData), rKey, fileInfo, ostream, sstream)
+				thirdBlockStart := 2 * qalqan.BLOCKLEN
+				thirdBlockEnd := thirdBlockStart + qalqan.BLOCKLEN
+
+				if len(data) < thirdBlockEnd {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "Ошибка: данных меньше 3 блоков!",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+
+				ivDecr := data[thirdBlockStart:thirdBlockEnd]
+
+				qalqan.DecryptOFB_File(len(encryptedData), rKey, ivDecr, ostream, sstream)
 
 				logs.Segments = []widget.RichTextSegment{}
 				logs.Segments = append(logs.Segments, &widget.TextSegment{
@@ -750,20 +781,35 @@ func InitUI(window fyne.Window) {
 
 				saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 					if err != nil {
-						//	logs.SetText("Error saving file: " + err.Error())
+						logs.Segments = []widget.RichTextSegment{}
+						logs.Segments = append(logs.Segments, &widget.TextSegment{
+							Text:  "Error saving file: " + err.Error(),
+							Style: widget.RichTextStyleInline,
+						})
+						logs.Refresh()
 
 						return
 					}
 					if writer == nil {
-						//	logs.SetText("No file selected for saving.")
+						logs.Segments = []widget.RichTextSegment{}
+						logs.Segments = append(logs.Segments, &widget.TextSegment{
+							Text:  "No file selected for saving.",
+							Style: widget.RichTextStyleInline,
+						})
+						logs.Refresh()
 						return
 					}
 					defer writer.Close()
 
-					//	logs.SetText("File successfully decrypted and saved!")
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "File successfully decrypted and saved!",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
 				}, window)
 
-				timestamp := time.Now().Format("2006-01-02_15-04-05")
+				timestamp := time.Now().Format("2006-01-02_15-04")
 				saveDialog.SetFileName(fmt.Sprintf("decrypted_file_%s.txt", timestamp))
 
 				saveDialog.Show()
