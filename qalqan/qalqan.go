@@ -403,24 +403,6 @@ func DecryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 	}
 
-	if modLen > 0 {
-		partialBuf := make([]byte, BLOCKLEN)
-		_, err := io.ReadFull(ostream, partialBuf[:modLen])
-		if err != nil {
-			return fmt.Errorf("failed to read final block: %w", err)
-		}
-
-		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
-
-		for j := 0; j < modLen; j++ {
-			clearBuf[j] = partialBuf[j] ^ tmpBuf[j]
-		}
-
-		if _, err := sstream.Write(clearBuf[:modLen]); err != nil {
-			return fmt.Errorf("failed to write final decrypted block: %w", err)
-		}
-	}
-
 	return nil
 }
 

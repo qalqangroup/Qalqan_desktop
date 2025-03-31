@@ -682,7 +682,20 @@ func InitUI(window fyne.Window) {
 				}
 
 				fileInfo := data[:qalqan.BLOCKLEN]
-				encryptedData := data[qalqan.BLOCKLEN:]
+				storedImit := data[1*qalqan.BLOCKLEN : 2*qalqan.BLOCKLEN]
+
+				computedImit := make([]byte, qalqan.BLOCKLEN)
+				qalqan.Qalqan_Imit(qalqan.BLOCKLEN, rimitkey, bytes.NewBuffer(fileInfo), computedImit)
+
+				if !bytes.Equal(computedImit, storedImit) {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "File info is corrupted!",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
 
 				userNumber := fileInfo[1]
 				fileType := fileInfo[4]
@@ -741,9 +754,6 @@ func InitUI(window fyne.Window) {
 					return
 				}
 
-				ostream := bytes.NewBuffer(encryptedData)
-				sstream := &bytes.Buffer{}
-
 				defer func() {
 					if r := recover(); r != nil {
 						logs.Segments = []widget.RichTextSegment{}
@@ -755,22 +765,27 @@ func InitUI(window fyne.Window) {
 					}
 				}()
 
-				thirdBlockStart := 2 * qalqan.BLOCKLEN
-				thirdBlockEnd := thirdBlockStart + qalqan.BLOCKLEN
+				start := 3 * qalqan.BLOCKLEN
+				end := len(data) - qalqan.BLOCKLEN
 
-				if len(data) < thirdBlockEnd {
+				if end <= start {
 					logs.Segments = []widget.RichTextSegment{}
 					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Ошибка: данных меньше 3 блоков!",
+						Text:  "Ошибка: недостаточно данных для дешифровки!",
 						Style: widget.RichTextStyleInline,
 					})
 					logs.Refresh()
 					return
 				}
 
+				sstream := &bytes.Buffer{}
+				trimmedData := data[start:end]
+
+				thirdBlockStart := 2 * qalqan.BLOCKLEN
+				thirdBlockEnd := thirdBlockStart + qalqan.BLOCKLEN
 				ivDecr := data[thirdBlockStart:thirdBlockEnd]
 
-				qalqan.DecryptOFB_File(len(encryptedData), rKey, ivDecr, ostream, sstream)
+				qalqan.DecryptOFB_File(len(trimmedData), rKey, ivDecr, bytes.NewReader(trimmedData), sstream)
 
 				logs.Segments = []widget.RichTextSegment{}
 				logs.Segments = append(logs.Segments, &widget.TextSegment{
