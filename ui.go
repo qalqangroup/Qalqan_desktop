@@ -102,7 +102,6 @@ func roundedRect(width, height int, radius int, bgColor color.Color) image.Image
 
 var session_keys [][100][qalqan.DEFAULT_KEY_LEN]byte
 var circle_keys [10][qalqan.DEFAULT_KEY_LEN]byte
-var sessionKeyCount int = 100
 var rimitkey []byte
 
 func InitUI(window fyne.Window) {
@@ -131,9 +130,6 @@ func InitUI(window fyne.Window) {
 	logsContainer := container.NewStack(bg, logs)
 
 	rKey := make([]uint8, qalqan.EXPKLEN)
-
-	selectSource := widget.NewSelect([]string{"File", "Key"}, nil)
-	selectSource.PlaceHolder = "Select source of key"
 
 	passwordEntry := widget.NewPasswordEntry()
 	passwordEntry.SetPlaceHolder("Enter a password...")
@@ -175,106 +171,243 @@ func InitUI(window fyne.Window) {
 		smallKeysLeftEntry,
 	)
 
+	selectSource := widget.NewSelect([]string{"File", "Key"}, nil)
+	selectSource.PlaceHolder = "Select source of key"
+
+	sessionKeyCount := 100
+
 	okButton := widget.NewButton("OK", func() {
+		if selectSource.Selected == "" {
+			dialog.ShowInformation("Error", "Select 'File' or 'Key'!", window)
+			return
+		}
+
 		password := passwordEntry.Text
 		if password == "" {
 			dialog.ShowInformation("Error", "Enter a password!", window)
 			return
 		}
-		sessionKeyCount = 100
-		keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 
-		fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-			if err != nil {
-				logs.Segments = []widget.RichTextSegment{}
-				logs.Segments = append(logs.Segments, &widget.TextSegment{
-					Text:  "Error opening file: " + err.Error(),
-					Style: widget.RichTextStyleInline,
-				})
-				logs.Refresh()
-				return
-			}
-			if reader == nil {
-				logs.Segments = []widget.RichTextSegment{}
-				logs.Segments = append(logs.Segments, &widget.TextSegment{
-					Text:  "No file selected.",
-					Style: widget.RichTextStyleInline,
-				})
-				logs.Refresh()
-				return
-			}
-			defer reader.Close()
+		switch selectSource.Selected {
+		case "File":
+			keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 
-			data, err := io.ReadAll(reader)
-			if err != nil {
-				logs.Segments = []widget.RichTextSegment{}
-				logs.Segments = append(logs.Segments, &widget.TextSegment{
-					Text:  "Failed to read file: " + err.Error(),
-					Style: widget.RichTextStyleInline,
-				})
-				logs.Refresh()
-				return
-			}
-			ostream := bytes.NewBuffer(data)
-			kikey := make([]byte, qalqan.DEFAULT_KEY_LEN)
-			ostream.Read(kikey[:qalqan.DEFAULT_KEY_LEN])
-			key := qalqan.Hash512(password)
-			keyBytes := hex.EncodeToString(key[:])
-			hashValue.Segments = []widget.RichTextSegment{
-				&widget.TextSegment{
-					Text:  keyBytes,
-					Style: widget.RichTextStyleInline,
-				},
-			}
-			hashValue.Refresh()
-			qalqan.Kexp(key[:], qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rKey)
-			for i := 0; i < qalqan.DEFAULT_KEY_LEN; i += qalqan.BLOCKLEN {
-				qalqan.DecryptOFB(kikey[i:i+qalqan.BLOCKLEN], rKey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, kikey[i:i+qalqan.BLOCKLEN])
-			}
-			if len(data) < qalqan.BLOCKLEN {
-				logs.Segments = []widget.RichTextSegment{}
-				logs.Segments = append(logs.Segments, &widget.TextSegment{
-					Text:  "The file is too short",
-					Style: widget.RichTextStyleInline,
-				})
-				logs.Refresh()
-				return
-			}
-			imitstream := bytes.NewBuffer(data)
-			imitFile := make([]byte, qalqan.BLOCKLEN)
-			qalqan.Kexp(kikey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rimitkey)
-			qalqan.Qalqan_Imit(uint64(len(data)-qalqan.BLOCKLEN), rimitkey, imitstream, imitFile)
-			rimit := make([]byte, qalqan.BLOCKLEN)
-			imitstream.Read(rimit[:qalqan.BLOCKLEN])
-			if !bytes.Equal(rimit, imitFile) {
-				logs.Segments = []widget.RichTextSegment{}
-				logs.Segments = append(logs.Segments, &widget.TextSegment{
-					Text:  "The file is corrupted",
-					Style: widget.RichTextStyleInline,
-				})
-				logs.Refresh()
-			}
-			circle_keys = [10][qalqan.DEFAULT_KEY_LEN]byte{}
-			qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
-			qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
-			fmt.Println("Session keys loaded successfully")
-			dialog.ShowInformation("Success", "Keys loaded successfully!", window)
-
-			defer func() {
-				if r := recover(); r != nil {
+			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+				if err != nil {
 					logs.Segments = []widget.RichTextSegment{}
 					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "File open failed: " + fmt.Sprintf("%v", r),
+						Text:  "Error opening file: " + err.Error(),
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				if reader == nil {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "No file selected.",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				defer reader.Close()
+
+				data, err := io.ReadAll(reader)
+				if err != nil {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "Failed to read file: " + err.Error(),
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				ostream := bytes.NewBuffer(data)
+				kikey := make([]byte, qalqan.DEFAULT_KEY_LEN)
+				ostream.Read(kikey[:qalqan.DEFAULT_KEY_LEN])
+				key := qalqan.Hash512(password)
+				keyBytes := hex.EncodeToString(key[:])
+				hashValue.Segments = []widget.RichTextSegment{
+					&widget.TextSegment{
+						Text:  keyBytes,
+						Style: widget.RichTextStyleInline,
+					},
+				}
+				hashValue.Refresh()
+				qalqan.Kexp(key[:], qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rKey)
+				for i := 0; i < qalqan.DEFAULT_KEY_LEN; i += qalqan.BLOCKLEN {
+					qalqan.DecryptOFB(kikey[i:i+qalqan.BLOCKLEN], rKey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, kikey[i:i+qalqan.BLOCKLEN])
+				}
+				if len(data) < qalqan.BLOCKLEN {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "The file is too short",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				imitstream := bytes.NewBuffer(data)
+				imitFile := make([]byte, qalqan.BLOCKLEN)
+				qalqan.Kexp(kikey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rimitkey)
+				qalqan.Qalqan_Imit(uint64(len(data)-qalqan.BLOCKLEN), rimitkey, imitstream, imitFile)
+				rimit := make([]byte, qalqan.BLOCKLEN)
+				imitstream.Read(rimit[:qalqan.BLOCKLEN])
+				if !bytes.Equal(rimit, imitFile) {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "The file is corrupted",
 						Style: widget.RichTextStyleInline,
 					})
 					logs.Refresh()
 				}
-			}()
-		}, window)
+				circle_keys = [10][qalqan.DEFAULT_KEY_LEN]byte{}
+				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
+				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
+				fmt.Println("Session keys loaded successfully")
+				dialog.ShowInformation("Success", "Keys loaded successfully!", window)
+				sessionKeyCount = 100
 
-		fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
-		fileDialog.Show()
+				defer func() {
+					if r := recover(); r != nil {
+						logs.Segments = []widget.RichTextSegment{}
+						logs.Segments = append(logs.Segments, &widget.TextSegment{
+							Text:  "File open failed: " + fmt.Sprintf("%v", r),
+							Style: widget.RichTextStyleInline,
+						})
+						logs.Refresh()
+					}
+				}()
+			}, window)
+
+			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
+			fileDialog.Show()
+
+		case "Key":
+			keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
+
+			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+				if err != nil {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "Error opening file: " + err.Error(),
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				if reader == nil {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "No file selected.",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				defer reader.Close()
+
+				data, err := io.ReadAll(reader)
+				if err != nil {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "Failed to read file: " + err.Error(),
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				ostream := bytes.NewBuffer(data)
+				kikey := make([]byte, qalqan.DEFAULT_KEY_LEN)
+				ostream.Read(kikey[:qalqan.DEFAULT_KEY_LEN])
+				key := qalqan.Hash512(password)
+				keyBytes := hex.EncodeToString(key[:])
+				hashValue.Segments = []widget.RichTextSegment{
+					&widget.TextSegment{
+						Text:  keyBytes,
+						Style: widget.RichTextStyleInline,
+					},
+				}
+				hashValue.Refresh()
+				qalqan.Kexp(key[:], qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rKey)
+				for i := 0; i < qalqan.DEFAULT_KEY_LEN; i += qalqan.BLOCKLEN {
+					qalqan.DecryptOFB(kikey[i:i+qalqan.BLOCKLEN], rKey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, kikey[i:i+qalqan.BLOCKLEN])
+				}
+				if len(data) < qalqan.BLOCKLEN {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "The file is too short",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
+				imitstream := bytes.NewBuffer(data)
+				imitFile := make([]byte, qalqan.BLOCKLEN)
+				qalqan.Kexp(kikey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rimitkey)
+				qalqan.Qalqan_Imit(uint64(len(data)-qalqan.BLOCKLEN), rimitkey, imitstream, imitFile)
+				rimit := make([]byte, qalqan.BLOCKLEN)
+				imitstream.Read(rimit[:qalqan.BLOCKLEN])
+				if !bytes.Equal(rimit, imitFile) {
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "The file is corrupted",
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+				}
+				circle_keys = [10][qalqan.DEFAULT_KEY_LEN]byte{}
+				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
+				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
+				fmt.Println("Session keys loaded successfully")
+				dialog.ShowInformation("Success", "Keys loaded successfully!", window)
+				sessionKeyCount = 100
+
+				defer func() {
+					if r := recover(); r != nil {
+						logs.Segments = []widget.RichTextSegment{}
+						logs.Segments = append(logs.Segments, &widget.TextSegment{
+							Text:  "File open failed: " + fmt.Sprintf("%v", r),
+							Style: widget.RichTextStyleInline,
+						})
+						logs.Refresh()
+					}
+				}()
+			}, window)
+
+			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
+			fileDialog.Show()
+		}
 	})
+
+	okButton.Disable()
+
+	validateInputs := func() {
+		if selectSource.Selected != "" && passwordEntry.Text != "" {
+			okButton.Enable()
+		} else {
+			okButton.Disable()
+		}
+	}
+
+	selectSource.OnChanged = func(value string) {
+		validateInputs()
+	}
+
+	passwordEntry.OnChanged = func(value string) {
+		validateInputs()
+	}
+
+	topRow := container.NewHBox(
+		layout.NewSpacer(),
+		container.NewGridWrap(fyne.NewSize(170, 40), selectSource),
+		layout.NewSpacer(),
+		container.NewGridWrap(fyne.NewSize(180, 40), passwordEntry),
+		layout.NewSpacer(),
+		container.NewGridWrap(fyne.NewSize(65, 40), okButton),
+		layout.NewSpacer(),
+	)
 
 	iconClear, err := fyne.LoadResourceFromPath("assets/clear.png")
 	if err != nil {
@@ -421,16 +554,6 @@ func InitUI(window fyne.Window) {
 	rightContainer := container.NewVBox(
 		container.NewCenter(modeExperts),
 		smallSelectModeEntry,
-	)
-
-	topRow := container.NewHBox(
-		layout.NewSpacer(),
-		container.NewGridWrap(fyne.NewSize(170, 40), selectSource),
-		layout.NewSpacer(),
-		container.NewGridWrap(fyne.NewSize(180, 40), passwordEntry),
-		layout.NewSpacer(),
-		container.NewGridWrap(fyne.NewSize(65, 40), okButton),
-		layout.NewSpacer(),
 	)
 
 	keyTypeSelect := widget.NewSelect(
@@ -798,17 +921,16 @@ func InitUI(window fyne.Window) {
 					if err != nil {
 						logs.Segments = []widget.RichTextSegment{}
 						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Error saving file: " + err.Error(),
+							Text:  "Ошибка сохранения файла: " + err.Error(),
 							Style: widget.RichTextStyleInline,
 						})
 						logs.Refresh()
-
 						return
 					}
 					if writer == nil {
 						logs.Segments = []widget.RichTextSegment{}
 						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "No file selected for saving.",
+							Text:  "Файл не выбран.",
 							Style: widget.RichTextStyleInline,
 						})
 						logs.Refresh()
@@ -816,9 +938,17 @@ func InitUI(window fyne.Window) {
 					}
 					defer writer.Close()
 
-					logs.Segments = []widget.RichTextSegment{}
+					if _, err := writer.Write(sstream.Bytes()); err != nil {
+						logs.Segments = append(logs.Segments, &widget.TextSegment{
+							Text:  "Ошибка записи файла: " + err.Error(),
+							Style: widget.RichTextStyleInline,
+						})
+						logs.Refresh()
+						return
+					}
+
 					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "File successfully decrypted and saved!",
+						Text:  "Файл успешно расшифрован и сохранен!",
 						Style: widget.RichTextStyleInline,
 					})
 					logs.Refresh()

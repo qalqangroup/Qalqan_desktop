@@ -379,28 +379,61 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 	}
 }
 
-func DecryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sstream io.Writer) error {
-	modLen := dataLen % BLOCKLEN
+func DecryptOFB_File(dataLen int, rKey []byte, iv []byte, istream io.Reader, ostream io.Writer) error {
 	tmpBuf := make([]byte, BLOCKLEN)
 	cipherBuf := make([]byte, BLOCKLEN)
 	clearBuf := make([]byte, BLOCKLEN)
 
-	Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
+	Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, clearBuf)
+	copy(tmpBuf, clearBuf)
 
-	for i := 0; i < dataLen-modLen; i += BLOCKLEN {
-		if _, err := io.ReadFull(ostream, cipherBuf); err != nil {
-			return fmt.Errorf("failed to read ciphertext: %w", err)
+	if _, err := io.ReadFull(istream, cipherBuf); err != nil {
+		return fmt.Errorf("failed to read first encrypted block: %w", err)
+	}
+
+	for i := 0; i < BLOCKLEN; i++ {
+		clearBuf[i] ^= cipherBuf[i]
+	}
+
+	if _, err := ostream.Write(clearBuf); err != nil {
+		return fmt.Errorf("failed to write first decrypted block: %w", err)
+	}
+
+	for i := BLOCKLEN; i < dataLen-(BLOCKLEN*2); i += BLOCKLEN {
+		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, clearBuf)
+		copy(tmpBuf, clearBuf)
+
+		if _, err := io.ReadFull(istream, cipherBuf); err != nil {
+			return fmt.Errorf("failed to read ciphertext block: %w", err)
 		}
 
 		for j := 0; j < BLOCKLEN; j++ {
-			clearBuf[j] = cipherBuf[j] ^ tmpBuf[j]
+			clearBuf[j] ^= cipherBuf[j]
 		}
 
-		if _, err := sstream.Write(clearBuf); err != nil {
+		if _, err := ostream.Write(clearBuf); err != nil {
 			return fmt.Errorf("failed to write decrypted data: %w", err)
 		}
+	}
 
-		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
+	Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, clearBuf)
+	if _, err := io.ReadFull(istream, cipherBuf); err != nil {
+		return fmt.Errorf("failed to read last ciphertext block: %w", err)
+	}
+
+	for j := 0; j < BLOCKLEN; j++ {
+		clearBuf[j] ^= cipherBuf[j]
+	}
+
+	rest := Myremove(&clearBuf[0])
+	if rest != BLOCKLEN {
+		if _, err := ostream.Write(clearBuf[:rest]); err != nil {
+			return fmt.Errorf("failed to write final decrypted block: %w", err)
+		}
+	} else {
+		if _, err := ostream.Write(clearBuf); err != nil {
+			return fmt.Errorf("failed to write final decrypted block: %w", err)
+		}
 	}
 
 	return nil
@@ -480,7 +513,6 @@ func Qalqan_ImitData(dataLen uint64, rKey []byte, indata []uint8, imit []uint8) 
 	copy(imit[:BLOCKLEN], cypherbuf[:BLOCKLEN])
 }
 
-/* Функция осуществляет удаление нулевых значений, дополненных до значения кратного 16 */
 func Myremove(buf *uint8) int {
 	var i int
 	bufSlice := (*[BLOCKLEN]uint8)(unsafe.Pointer(buf))[:]
