@@ -103,6 +103,7 @@ func roundedRect(width, height int, radius int, bgColor color.Color) image.Image
 var session_keys [][100][qalqan.DEFAULT_KEY_LEN]byte
 var circle_keys [10][qalqan.DEFAULT_KEY_LEN]byte
 var rimitkey []byte
+var selectedKeyType string = "Circular"
 
 func InitUI(window fyne.Window) {
 
@@ -559,10 +560,12 @@ func InitUI(window fyne.Window) {
 	keyTypeSelect := widget.NewSelect(
 		[]string{"Circular", "Session"},
 		func(selected string) {
+			selectedKeyType = selected
 			fmt.Println("Выбран тип ключа:", selected)
 		},
 	)
 
+	keyTypeSelect.SetSelected(selectedKeyType)
 	keyTypeSelect.PlaceHolder = "Select key type"
 
 	centerContainer := container.NewVBox(
@@ -645,18 +648,16 @@ func InitUI(window fyne.Window) {
 					iv[i] = byte(rand.Intn(256))
 				}
 
-				/*
-					rKey := useAndDeleteSessionKey() // test use of encryption on session keys
-					if rKey == nil {
-						logOutput.SetText("No session key available for encryption.")
-						return
-					}
-				*/
+				switch selectedKeyType {
+				case "Circular":
+					rKey = useAndDeleteCircleKey(rand.Intn(10))
+				case "Session":
+					rKey = useAndDeleteSessionKey(rand.Intn(10))
+				default:
+					dialog.ShowError(fmt.Errorf("invalid key type selected: %s", selectedKeyType), window)
+					return
+				}
 
-				fmt.Println("circle_keys:", circle_keys)
-				randomNumber := rand.Intn(10)
-				fmt.Println("Key's number:", randomNumber)
-				rKey := useAndDeleteCircleKey(randomNumber)
 				if rKey == nil {
 					logs.Segments = []widget.RichTextSegment{}
 					logs.Segments = append(logs.Segments, &widget.TextSegment{
@@ -826,28 +827,8 @@ func InitUI(window fyne.Window) {
 				circleKeyNumber := int(fileInfo[6])
 				sessionKeyNumber := int(fileInfo[7])
 
-				var fileTypeStr string
-				switch fileType {
-				case 0x00:
-					fileTypeStr = "File"
-				case 0x77:
-					fileTypeStr = "File"
-				case 0x88:
-					fileTypeStr = "Photo"
-				case 0x66:
-					fileTypeStr = "Text (Message)"
-				case 0x55:
-					fileTypeStr = "Audio"
-				default:
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Unknown file type: 0x" + fmt.Sprintf("%X", fileType),
-						Style: widget.RichTextStyleInline,
-					})
-					logs.Refresh()
-					return
-				}
 				keyGenerated := false
+				_ = userNumber
 
 				if !keyGenerated {
 					switch keyType {
@@ -912,7 +893,6 @@ func InitUI(window fyne.Window) {
 
 				logs.Segments = []widget.RichTextSegment{}
 				logs.Segments = append(logs.Segments, &widget.TextSegment{
-					Text:  fmt.Sprintf("User: %d, FileType: %s (0x%X), KeyType: %d, CircleKey: %d, SessionKey: %d", userNumber, fileTypeStr, fileType, keyType, circleKeyNumber, sessionKeyNumber),
 					Style: widget.RichTextStyleInline,
 				})
 				logs.Refresh()
@@ -954,8 +934,32 @@ func InitUI(window fyne.Window) {
 					logs.Refresh()
 				}, window)
 
-				timestamp := time.Now().Format("2006-01-02_15-04")
-				saveDialog.SetFileName(fmt.Sprintf("decrypted_file_%s.txt", timestamp))
+				switch fileType {
+				case 0x00:
+					timestamp := time.Now().Format("2006-01-02_15-04")
+					saveDialog.SetFileName(fmt.Sprintf("File_%s.txt", timestamp))
+				case 0x77:
+					timestamp := time.Now().Format("2006-01-02_15-04")
+					saveDialog.SetFileName(fmt.Sprintf("File_%s.jpeg", timestamp))
+				case 0x88:
+					timestamp := time.Now().Format("2006-01-02_15-04")
+					saveDialog.SetFileName(fmt.Sprintf("Image_%s.mp4", timestamp))
+				case 0x66:
+					timestamp := time.Now().Format("2006-01-02_15-04")
+					saveDialog.SetFileName(fmt.Sprintf("Text_%s.txt", timestamp))
+
+				case 0x55:
+					timestamp := time.Now().Format("2006-01-02_15-04")
+					saveDialog.SetFileName(fmt.Sprintf("Audio_%s.mp3", timestamp))
+				default:
+					logs.Segments = []widget.RichTextSegment{}
+					logs.Segments = append(logs.Segments, &widget.TextSegment{
+						Text:  "Unknown file type: 0x" + fmt.Sprintf("%X", fileType),
+						Style: widget.RichTextStyleInline,
+					})
+					logs.Refresh()
+					return
+				}
 
 				saveDialog.Show()
 			}, window)

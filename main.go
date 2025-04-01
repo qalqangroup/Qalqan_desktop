@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	myApp := app.New()
+	myApp := app.NewWithID("QalqanDS")
 	myWindow := myApp.NewWindow("QalqanDS")
 	myWindow.Resize(fyne.NewSize(570, 300))
 	myWindow.CenterOnScreen()
