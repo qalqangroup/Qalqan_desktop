@@ -339,12 +339,10 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 			metaData := CreateFileMetadata(1, 0x77, 1, 5, 0)
 			metaDataImit := make([]uint8, BLOCKLEN)
 			Qalqan_Imit(uint64(len(metaData)), rKey, bytes.NewReader(metaData[:]), metaDataImit)
-			//	Qalqan_Imit(uint64(len(FileImit)), rKey, bytes.NewReader(FileImit[:]), FileImit)
 			sstream.Write(metaData[:])
 			sstream.Write(metaDataImit)
 			sstream.Write(iv)
 			sstream.Write(cipherBuf)
-			//	sstream.Write(FileImit)
 		}
 	}
 	if modLen < BLOCKLEN {
@@ -358,12 +356,10 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		metaData := CreateFileMetadata(1, 0x77, 1, 5, 0)
 		metaDataImit := make([]uint8, BLOCKLEN)
 		Qalqan_Imit(uint64(len(metaData)), rKey, bytes.NewReader(metaData[:]), metaDataImit)
-		//	Qalqan_Imit(uint64(len(FileImit)), rKey, bytes.NewReader(FileImit[:]), FileImit)
 		sstream.Write(metaData[:])
 		sstream.Write(metaDataImit)
 		sstream.Write(iv)
 		sstream.Write(cipherBuf)
-		//	sstream.Write(FileImit)
 	}
 	if modLen != 0 && modLen > BLOCKLEN {
 		sstream.Write(iv)
@@ -393,12 +389,10 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		metaData := CreateFileMetadata(1, 0x77, 1, 5, 0)
 		metaDataImit := make([]uint8, BLOCKLEN)
 		Qalqan_Imit(uint64(len(metaData)), rKey, bytes.NewReader(metaData[:]), metaDataImit)
-		//	Qalqan_Imit(uint64(len(FileImit)), rKey, bytes.NewReader(FileImit[:]), FileImit)
 		sstream.Write(metaData[:])
 		sstream.Write(metaDataImit)
 		sstream.Write(iv)
 		sstream.Write(cipherBuf)
-		//	sstream.Write(FileImit)
 	}
 }
 
@@ -557,15 +551,16 @@ func Myremove(buf *uint8) int {
 func CreateFileMetadata(userNumber byte, fileType byte, keyType byte, circleKeyNumber byte, sessionKeyNumber byte) [16]byte {
 	var metadata [16]byte
 
-	metadata[0] = 0x00             // Всегда 0
-	metadata[1] = userNumber       // Номер пользователя
-	metadata[2] = 0x04             // Постоянное значение
-	metadata[3] = 0x20             // Постоянное значение
-	metadata[4] = fileType         // Тип файла (0x77 - file, 0x88 - photo, 0x66 - text, 0x55 - audio)
-	metadata[5] = keyType          // Тип ключа (0 - circular, 1 - session)
-	metadata[6] = circleKeyNumber  // Номер кругового ключа
-	metadata[7] = sessionKeyNumber // Номер сессионного ключа
-	// Оставшиеся байты (8-15) заполняем нулями (уже 0 по умолчанию)
+	metadata[0] = 0x00             // Always 0
+	metadata[1] = userNumber       // User number (0-255)
+	metadata[2] = 0x04             // Constant value
+	metadata[3] = 0x20             // Constant value
+	metadata[4] = fileType         // File type (0x77 - file, 0x88 - photo, 0x66 - text, 0x55 - audio)
+	metadata[5] = keyType          // Key type (0 - circular, 1 - session)
+	metadata[6] = circleKeyNumber  // Circle key number
+	metadata[7] = sessionKeyNumber // Session key number
+	// Fill the remaining bytes (8-15) with zeros (already 0 by default)
+
 	return metadata
 }
 

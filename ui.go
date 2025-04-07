@@ -100,6 +100,22 @@ func roundedRect(width, height int, radius int, bgColor color.Color) image.Image
 	return img
 }
 
+func CreateFileMetadata(userNumber byte, fileType byte, keyType byte, circleKeyNumber byte, sessionKeyNumber byte) [16]byte {
+	var metadata [16]byte
+
+	metadata[0] = 0x00             // Always 0
+	metadata[1] = userNumber       // User number (0-255)
+	metadata[2] = 0x04             // Constant value
+	metadata[3] = 0x20             // Constant value
+	metadata[4] = fileType         // File type (0x77 - file, 0x88 - photo, 0x66 - text, 0x55 - audio)
+	metadata[5] = keyType          // Key type (0 - circular, 1 - session)
+	metadata[6] = circleKeyNumber  // Circle key number
+	metadata[7] = sessionKeyNumber // Session key number
+	// Fill the remaining bytes (8-15) with zeros (already 0 by default)
+
+	return metadata
+}
+
 var session_keys [][100][qalqan.DEFAULT_KEY_LEN]byte
 var circle_keys [10][qalqan.DEFAULT_KEY_LEN]byte
 var rimitkey []byte
@@ -116,6 +132,21 @@ func InitUI(window fyne.Window) {
 	} else {
 		window.SetIcon(icon)
 	}
+
+	selectedLanguage := widget.NewSelect(
+		[]string{"KZ", "RU", "EN"},
+		func(selected string) {
+			fmt.Println("Language selected:", selected)
+
+		},
+	)
+
+	selectedLanguage.SetSelected("EN")
+	selectedLanguage.PlaceHolder = "Select language"
+
+	languageContainer := container.NewVBox(
+		container.NewGridWrap(fyne.NewSize(60, 25), selectedLanguage),
+	)
 
 	logs := widget.NewRichText(&widget.TextSegment{
 		Text:  "Logs output...",
@@ -423,7 +454,7 @@ func InitUI(window fyne.Window) {
 			func() {
 				logs.Segments = []widget.RichTextSegment{}
 				logs.Refresh()
-				fmt.Println("Логи очищены")
+				fmt.Println("Logs cleared")
 			},
 		),
 	)
@@ -496,7 +527,7 @@ func InitUI(window fyne.Window) {
 		iconEncrMessage,
 		func() {
 			messageSend.SetText("")
-			fmt.Println("Очищено")
+			fmt.Println("Cleared message field")
 
 			dialog.ShowInformation("Success", "Message encrypted successfully!", window)
 		},
@@ -561,7 +592,7 @@ func InitUI(window fyne.Window) {
 		[]string{"Circular", "Session"},
 		func(selected string) {
 			selectedKeyType = selected
-			fmt.Println("Выбран тип ключа:", selected)
+			fmt.Println("Key type selected:", selected)
 		},
 	)
 
@@ -585,7 +616,7 @@ func InitUI(window fyne.Window) {
 
 	iconEncrypt, err := fyne.LoadResourceFromPath("assets/encrypt.png")
 	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
+		fmt.Println("Error loading icon:", err)
 		iconEncrypt = theme.ConfirmIcon()
 	}
 
@@ -670,6 +701,12 @@ func InitUI(window fyne.Window) {
 
 				qalqan.EncryptOFB_File(len(data), rKey, iv, ostream, sstream)
 
+				encryptedData := sstream.Bytes()
+				FileImit := make([]byte, qalqan.BLOCKLEN)
+
+				qalqan.Qalqan_Imit(uint64(len(encryptedData)), rKey, bytes.NewReader(encryptedData), FileImit)
+				sstream.Write(FileImit)
+
 				saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 					if err != nil {
 						logs.Segments = []widget.RichTextSegment{}
@@ -723,7 +760,7 @@ func InitUI(window fyne.Window) {
 
 	iconDecrypt, err := fyne.LoadResourceFromPath("assets/decrypt.png")
 	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
+		fmt.Println("Error loading icon:", err)
 		iconDecrypt = theme.CancelIcon()
 	}
 
@@ -839,7 +876,7 @@ func InitUI(window fyne.Window) {
 					default:
 						logs.Segments = []widget.RichTextSegment{}
 						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  fmt.Sprintf("Ошибка: неизвестный тип ключа 0x%X", keyType),
+							Text:  fmt.Sprintf("Error: unknown key type 0x%X", keyType),
 							Style: widget.RichTextStyleInline,
 						})
 						logs.Refresh()
@@ -901,7 +938,7 @@ func InitUI(window fyne.Window) {
 					if err != nil {
 						logs.Segments = []widget.RichTextSegment{}
 						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Ошибка сохранения файла: " + err.Error(),
+							Text:  "Error saving file: " + err.Error(),
 							Style: widget.RichTextStyleInline,
 						})
 						logs.Refresh()
@@ -910,7 +947,7 @@ func InitUI(window fyne.Window) {
 					if writer == nil {
 						logs.Segments = []widget.RichTextSegment{}
 						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Файл не выбран.",
+							Text:  "File not selected.",
 							Style: widget.RichTextStyleInline,
 						})
 						logs.Refresh()
@@ -920,7 +957,7 @@ func InitUI(window fyne.Window) {
 
 					if _, err := writer.Write(sstream.Bytes()); err != nil {
 						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Ошибка записи файла: " + err.Error(),
+							Text:  "File write error: " + err.Error(),
 							Style: widget.RichTextStyleInline,
 						})
 						logs.Refresh()
@@ -928,7 +965,7 @@ func InitUI(window fyne.Window) {
 					}
 
 					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Файл успешно расшифрован и сохранен!",
+						Text:  "The file has been successfully decrypted and saved!",
 						Style: widget.RichTextStyleInline,
 					})
 					logs.Refresh()
@@ -971,7 +1008,7 @@ func InitUI(window fyne.Window) {
 
 	iconEncryptPhoto, err := fyne.LoadResourceFromPath("assets/takePhoto.png")
 	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
+		fmt.Println("Error loading icon:", err)
 		iconEncryptPhoto = theme.CancelIcon()
 	}
 
@@ -984,7 +1021,7 @@ func InitUI(window fyne.Window) {
 
 	iconEncryptVideo, err := fyne.LoadResourceFromPath("assets/takeVideo.png")
 	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
+		fmt.Println("Error loading icon:", err)
 		iconEncryptVideo = theme.CancelIcon()
 	}
 
@@ -1008,6 +1045,7 @@ func InitUI(window fyne.Window) {
 	)
 
 	mainUI := container.NewVBox(
+		languageContainer,
 		widget.NewLabel(" "),
 		topRow,
 		widget.NewLabel(" "),
