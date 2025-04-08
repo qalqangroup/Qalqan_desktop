@@ -100,22 +100,6 @@ func roundedRect(width, height int, radius int, bgColor color.Color) image.Image
 	return img
 }
 
-func CreateFileMetadata(userNumber byte, fileType byte, keyType byte, circleKeyNumber byte, sessionKeyNumber byte) [16]byte {
-	var metadata [16]byte
-
-	metadata[0] = 0x00             // Always 0
-	metadata[1] = userNumber       // User number (0-255)
-	metadata[2] = 0x04             // Constant value
-	metadata[3] = 0x20             // Constant value
-	metadata[4] = fileType         // File type (0x77 - file, 0x88 - photo, 0x66 - text, 0x55 - audio)
-	metadata[5] = keyType          // Key type (0 - circular, 1 - session)
-	metadata[6] = circleKeyNumber  // Circle key number
-	metadata[7] = sessionKeyNumber // Session key number
-	// Fill the remaining bytes (8-15) with zeros (already 0 by default)
-
-	return metadata
-}
-
 var session_keys [][100][qalqan.DEFAULT_KEY_LEN]byte
 var circle_keys [10][qalqan.DEFAULT_KEY_LEN]byte
 var rimitkey []byte

@@ -316,11 +316,11 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 		copy(cipherBuf, tmpBuf)
 		ostream.Read(clearBuf)
-		for i := range BLOCKLEN {
+		for i := 0; i < BLOCKLEN; i++ {
 			cipherBuf[i] ^= clearBuf[i]
 		}
 		sstream.Write(cipherBuf)
-		for i := BLOCKLEN; i < dataLen; i += BLOCKLEN {
+		for i := 0; i < dataLen; i += BLOCKLEN {
 			ostream.Read(clearBuf)
 			Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
 			copy(tmpBuf, cipherBuf)
@@ -349,8 +349,8 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 		copy(cipherBuf, tmpBuf)
 		ostream.Read(clearBuf)
-		myappend(clearBuf, int(modLen))
-		for i := range BLOCKLEN {
+		myappend(clearBuf, int(BLOCKLEN-modLen))
+		for i := 0; i < BLOCKLEN; i++ {
 			cipherBuf[i] ^= clearBuf[i]
 		}
 		metaData := CreateFileMetadata(1, 0x77, 1, 5, 0)
@@ -366,7 +366,7 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 		copy(cipherBuf, tmpBuf)
 		ostream.Read(clearBuf)
-		for i := range BLOCKLEN {
+		for i := 0; i < BLOCKLEN; i++ {
 			cipherBuf[i] ^= clearBuf[i]
 		}
 		sstream.Write(cipherBuf)
