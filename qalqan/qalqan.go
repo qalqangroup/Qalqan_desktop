@@ -306,73 +306,41 @@ func myappend(buf []byte, len int) {
 }
 
 func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sstream io.Writer) {
-	modLen := dataLen % BLOCKLEN
 	tmpBuf := make([]byte, BLOCKLEN)
-	cipherBuf := make([]byte, BLOCKLEN)
-	clearBuf := make([]byte, BLOCKLEN)
+	streamBlock := make([]byte, BLOCKLEN)
+	plainBlock := make([]byte, BLOCKLEN)
 
-	if modLen == 0 {
-		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
-		copy(cipherBuf, tmpBuf)
-		ostream.Read(clearBuf)
-		for i := range BLOCKLEN {
-			cipherBuf[i] = cipherBuf[i] ^ clearBuf[i]
-		}
-		sstream.Write(cipherBuf)
-		for i := BLOCKLEN; i < dataLen; i += BLOCKLEN {
-			ostream.Read(clearBuf)
-			Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
-			copy(tmpBuf, cipherBuf)
-			for j := 0; j < BLOCKLEN; j++ {
-				cipherBuf[j] = cipherBuf[j] ^ clearBuf[j]
-			}
-			sstream.Write(cipherBuf)
-		}
-		if dataLen != BLOCKLEN {
-			resbuf := make([]byte, BLOCKLEN)
-			myappend(resbuf, BLOCKLEN)
-			Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
-			for j := 0; j < BLOCKLEN; j++ {
-				cipherBuf[j] = cipherBuf[j] ^ resbuf[j]
-			}
-			sstream.Write(cipherBuf)
-		}
-	}
-	if modLen < BLOCKLEN {
-		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
-		copy(cipherBuf, tmpBuf)
-		ostream.Read(clearBuf)
-		myappend(clearBuf, int(modLen))
-		for i := range BLOCKLEN {
-			cipherBuf[i] = cipherBuf[i] ^ clearBuf[i]
-		}
-		sstream.Write(cipherBuf)
-	}
-	if modLen != 0 && modLen > BLOCKLEN {
-		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
-		copy(cipherBuf, tmpBuf)
-		ostream.Read(clearBuf)
-		for i := range BLOCKLEN {
-			cipherBuf[i] = cipherBuf[i] ^ clearBuf[i]
-		}
-		sstream.Write(cipherBuf)
-		for i := BLOCKLEN; i < dataLen-modLen; i += BLOCKLEN {
-			ostream.Read(clearBuf)
-			Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
-			copy(tmpBuf, cipherBuf)
-			for j := 0; j < BLOCKLEN; j++ {
-				cipherBuf[j] = cipherBuf[j] ^ clearBuf[j]
-			}
-			sstream.Write(cipherBuf)
-		}
-		ostream.Read(clearBuf[:modLen])
-		myappend(clearBuf, int(modLen))
+	copy(tmpBuf, iv)
 
-		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
-		for j := 0; j < BLOCKLEN; j++ {
-			cipherBuf[j] = cipherBuf[j] ^ clearBuf[j]
+	total := 0
+	for {
+		n, err := io.ReadFull(ostream, plainBlock)
+		if err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				if n == 0 {
+					break
+				}
+				myappend(plainBlock, n)
+			} else {
+				panic(fmt.Errorf("read failed: %w", err))
+			}
 		}
-		sstream.Write(cipherBuf)
+
+		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, streamBlock)
+		copy(tmpBuf, streamBlock)
+
+		for i := 0; i < BLOCKLEN; i++ {
+			streamBlock[i] ^= plainBlock[i]
+		}
+
+		if _, err := sstream.Write(streamBlock); err != nil {
+			panic(fmt.Errorf("write failed: %w", err))
+		}
+
+		total += BLOCKLEN
+		if total >= dataLen {
+			break
+		}
 	}
 }
 
