@@ -70,7 +70,7 @@ func useAndDeleteSessionKey(sessionKeyNumber int) []uint8 {
 
 func useAndDeleteCircleKey(circleKeyNumber int) []uint8 {
 	if len(circle_keys) == 0 || len(circle_keys[0]) == 0 {
-		fmt.Println("No session keys available")
+		fmt.Println("No circle keys available")
 		return nil
 	}
 	key := circle_keys[circleKeyNumber][:qalqan.DEFAULT_KEY_LEN]
