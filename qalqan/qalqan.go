@@ -15,7 +15,6 @@ qalqan.Encrypt(data, rkey111, 32, 16, res)  // [255 247 218 248 163 247 226 11 3
 qalqan.DecryptOFB(res, rkey111, 32, 16, data2) // [16 17 34 51 68 85 102 119 136 153 170 187 204 221 238 255] - etalon decrypted data*/
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"unsafe"
@@ -316,16 +315,16 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 		copy(cipherBuf, tmpBuf)
 		ostream.Read(clearBuf)
-		for i := 0; i < BLOCKLEN; i++ {
-			cipherBuf[i] ^= clearBuf[i]
+		for i := range BLOCKLEN {
+			cipherBuf[i] = cipherBuf[i] ^ clearBuf[i]
 		}
 		sstream.Write(cipherBuf)
-		for i := 0; i < dataLen; i += BLOCKLEN {
+		for i := BLOCKLEN; i < dataLen; i += BLOCKLEN {
 			ostream.Read(clearBuf)
 			Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
 			copy(tmpBuf, cipherBuf)
 			for j := 0; j < BLOCKLEN; j++ {
-				cipherBuf[j] ^= clearBuf[j]
+				cipherBuf[j] = cipherBuf[j] ^ clearBuf[j]
 			}
 			sstream.Write(cipherBuf)
 		}
@@ -334,14 +333,8 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 			myappend(resbuf, BLOCKLEN)
 			Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
 			for j := 0; j < BLOCKLEN; j++ {
-				cipherBuf[j] ^= resbuf[j]
+				cipherBuf[j] = cipherBuf[j] ^ resbuf[j]
 			}
-			metaData := CreateFileMetadata(1, 0x77, 1, 5, 0)
-			metaDataImit := make([]uint8, BLOCKLEN)
-			Qalqan_Imit(uint64(len(metaData)), rKey, bytes.NewReader(metaData[:]), metaDataImit)
-			sstream.Write(metaData[:])
-			sstream.Write(metaDataImit)
-			sstream.Write(iv)
 			sstream.Write(cipherBuf)
 		}
 	}
@@ -349,25 +342,18 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 		copy(cipherBuf, tmpBuf)
 		ostream.Read(clearBuf)
-		myappend(clearBuf, int(BLOCKLEN-modLen))
-		for i := 0; i < BLOCKLEN; i++ {
-			cipherBuf[i] ^= clearBuf[i]
+		myappend(clearBuf, int(modLen))
+		for i := range BLOCKLEN {
+			cipherBuf[i] = cipherBuf[i] ^ clearBuf[i]
 		}
-		metaData := CreateFileMetadata(1, 0x77, 1, 5, 0)
-		metaDataImit := make([]uint8, BLOCKLEN)
-		Qalqan_Imit(uint64(len(metaData)), rKey, bytes.NewReader(metaData[:]), metaDataImit)
-		sstream.Write(metaData[:])
-		sstream.Write(metaDataImit)
-		sstream.Write(iv)
 		sstream.Write(cipherBuf)
 	}
 	if modLen != 0 && modLen > BLOCKLEN {
-		sstream.Write(iv)
 		Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, tmpBuf)
 		copy(cipherBuf, tmpBuf)
 		ostream.Read(clearBuf)
-		for i := 0; i < BLOCKLEN; i++ {
-			cipherBuf[i] ^= clearBuf[i]
+		for i := range BLOCKLEN {
+			cipherBuf[i] = cipherBuf[i] ^ clearBuf[i]
 		}
 		sstream.Write(cipherBuf)
 		for i := BLOCKLEN; i < dataLen-modLen; i += BLOCKLEN {
@@ -375,7 +361,7 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 			Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
 			copy(tmpBuf, cipherBuf)
 			for j := 0; j < BLOCKLEN; j++ {
-				cipherBuf[j] ^= clearBuf[j]
+				cipherBuf[j] = cipherBuf[j] ^ clearBuf[j]
 			}
 			sstream.Write(cipherBuf)
 		}
@@ -384,14 +370,8 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 
 		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
 		for j := 0; j < BLOCKLEN; j++ {
-			cipherBuf[j] ^= clearBuf[j]
+			cipherBuf[j] = cipherBuf[j] ^ clearBuf[j]
 		}
-		metaData := CreateFileMetadata(1, 0x77, 1, 5, 0)
-		metaDataImit := make([]uint8, BLOCKLEN)
-		Qalqan_Imit(uint64(len(metaData)), rKey, bytes.NewReader(metaData[:]), metaDataImit)
-		sstream.Write(metaData[:])
-		sstream.Write(metaDataImit)
-		sstream.Write(iv)
 		sstream.Write(cipherBuf)
 	}
 }

@@ -645,7 +645,6 @@ func InitUI(window fyne.Window) {
 				}
 
 				ostream := bytes.NewBuffer(data)
-				sstream := &bytes.Buffer{}
 
 				defer func() {
 					if r := recover(); r != nil {
@@ -659,8 +658,16 @@ func InitUI(window fyne.Window) {
 				}()
 
 				iv := make([]byte, qalqan.BLOCKLEN)
-				for i := range qalqan.BLOCKLEN {
-					iv[i] = byte(rand.Intn(256))
+				/*		for i := range qalqan.BLOCKLEN {
+							iv[i] = byte(rand.Intn(256))
+						}
+				*/
+
+				iv = []byte{
+					0x62, 0x3A, 0x63, 0x2F,
+					0x04, 0x3D, 0xD2, 0x85,
+					0xA5, 0x7B, 0x6E, 0x3F,
+					0xAB, 0xB9, 0x4D, 0x05,
 				}
 
 				switch selectedKeyType {
@@ -683,14 +690,27 @@ func InitUI(window fyne.Window) {
 					return
 				}
 
-				qalqan.EncryptOFB_File(len(data), rKey, iv, ostream, sstream)
+				writeBuf := bytes.NewBuffer(nil)
 
-				encryptedData := sstream.Bytes()
-				FileImit := make([]byte, qalqan.BLOCKLEN)
+				metaData := qalqan.CreateFileMetadata(1, 0x00, 0, 8, 10)
+				writeBuf.Write(metaData[:])
 
-				qalqan.Qalqan_Imit(uint64(len(encryptedData)), rKey, bytes.NewReader(encryptedData), FileImit)
-				sstream.Write(FileImit)
+				metaDataImit := make([]byte, qalqan.BLOCKLEN)
+				qalqan.Qalqan_Imit(uint64(len(metaData)), rimitkey, bytes.NewReader(metaData[:]), metaDataImit)
+				writeBuf.Write(metaDataImit)
 
+				writeBuf.Write(iv)
+
+				cipherTextStream := &bytes.Buffer{}
+				qalqan.EncryptOFB_File(len(data), rKey, iv, ostream, cipherTextStream)
+				cipherText := cipherTextStream.Bytes()
+				writeBuf.Write(cipherText)
+
+				fileContent := writeBuf.Bytes()
+				fileImit := make([]byte, qalqan.BLOCKLEN)
+				qalqan.Qalqan_Imit(uint64(len(fileContent)), rimitkey, bytes.NewReader(fileContent), fileImit)
+
+				writeBuf.Write(fileImit)
 				saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 					if err != nil {
 						logs.Segments = []widget.RichTextSegment{}
@@ -713,7 +733,7 @@ func InitUI(window fyne.Window) {
 					}
 					defer writer.Close()
 
-					_, err = writer.Write(sstream.Bytes())
+					_, err = writer.Write(writeBuf.Bytes())
 					if err != nil {
 						logs.Segments = []widget.RichTextSegment{}
 						logs.Segments = append(logs.Segments, &widget.TextSegment{
@@ -896,7 +916,7 @@ func InitUI(window fyne.Window) {
 				if end <= start {
 					logs.Segments = []widget.RichTextSegment{}
 					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Ошибка: недостаточно данных для дешифровки!",
+						Text:  "Error: Not enough data to decrypt!",
 						Style: widget.RichTextStyleInline,
 					})
 					logs.Refresh()
