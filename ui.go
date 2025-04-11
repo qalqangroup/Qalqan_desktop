@@ -10,6 +10,8 @@ import (
 	"image/draw"
 	"io"
 	"math/rand"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -658,23 +660,41 @@ func InitUI(window fyne.Window) {
 				}()
 
 				iv := make([]byte, qalqan.BLOCKLEN)
-				/*		for i := range qalqan.BLOCKLEN {
-							iv[i] = byte(rand.Intn(256))
-						}
-				*/
-
-				iv = []byte{
-					0x62, 0x3A, 0x63, 0x2F,
-					0x04, 0x3D, 0xD2, 0x85,
-					0xA5, 0x7B, 0x6E, 0x3F,
-					0xAB, 0xB9, 0x4D, 0x05,
+				for i := range qalqan.BLOCKLEN {
+					iv[i] = byte(rand.Intn(256))
 				}
+
+				var fileType byte
+
+				path := reader.URI().Path()
+				ext := filepath.Ext(path)
+
+				switch strings.ToLower(ext) {
+				case ".jpg", ".jpeg", ".png", ".bmp", ".gif":
+					fileType = 0x88
+				case ".txt", ".md", ".log":
+					fileType = 0x66
+				case ".mp3", ".wav", ".ogg":
+					fileType = 0x55
+				case ".doc", ".pdf", ".bin":
+					fileType = 0x77
+				default:
+					fileType = 0x00
+				}
+
+				userNumber := 1
+				var keyType byte
+
+				circleKeyNumber := rand.Intn(10)
+				sessionKeyNumber := rand.Intn(100)
 
 				switch selectedKeyType {
 				case "Circular":
-					rKey = useAndDeleteCircleKey(rand.Intn(10))
+					keyType = 0x00
+					rKey = useAndDeleteCircleKey(circleKeyNumber)
 				case "Session":
-					rKey = useAndDeleteSessionKey(rand.Intn(10))
+					keyType = 0x01
+					rKey = useAndDeleteSessionKey(sessionKeyNumber)
 				default:
 					dialog.ShowError(fmt.Errorf("invalid key type selected: %s", selectedKeyType), window)
 					return
@@ -692,7 +712,7 @@ func InitUI(window fyne.Window) {
 
 				writeBuf := bytes.NewBuffer(nil)
 
-				metaData := qalqan.CreateFileMetadata(1, 0x00, 0, 8, 10)
+				metaData := qalqan.CreateFileMetadata(byte(userNumber), byte(fileType), byte(keyType), byte(circleKeyNumber), byte(sessionKeyNumber))
 				writeBuf.Write(metaData[:])
 
 				metaDataImit := make([]byte, qalqan.BLOCKLEN)
