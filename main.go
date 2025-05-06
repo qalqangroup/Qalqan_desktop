@@ -11,6 +11,13 @@ func main() {
 	myWindow.Resize(fyne.NewSize(570, 300))
 	myWindow.CenterOnScreen()
 	myWindow.SetFixedSize(false)
-	InitUI(myWindow)
+	InitUI(myApp, myWindow)
 	myWindow.ShowAndRun()
 }
+
+/*
+					Tasks:
+1. Why are the last 16 bytes used when decrypting?
+2. Add a camera and video encryption;
+3. Add support russian and kazakh languages;
+*/

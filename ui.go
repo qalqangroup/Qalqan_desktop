@@ -107,7 +107,7 @@ var circle_keys [10][qalqan.DEFAULT_KEY_LEN]byte
 var rimitkey []byte
 var selectedKeyType string = "Circular"
 
-func InitUI(window fyne.Window) {
+func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 	bgImage := canvas.NewImageFromFile("assets/background.png")
 	bgImage.FillMode = canvas.ImageFillStretch
@@ -116,7 +116,7 @@ func InitUI(window fyne.Window) {
 	if err != nil {
 		fmt.Println("Error:", err)
 	} else {
-		window.SetIcon(icon)
+		myWindow.SetIcon(icon)
 	}
 
 	selectedLanguage := widget.NewSelect(
@@ -130,8 +130,27 @@ func InitUI(window fyne.Window) {
 	selectedLanguage.SetSelected("EN")
 	selectedLanguage.PlaceHolder = "Select language"
 
+	iconTransition, err := fyne.LoadResourceFromPath("assets/messaging.png")
+	if err != nil {
+		fmt.Println("Ошибка загрузки иконки:", err)
+		iconTransition = theme.CancelIcon()
+	}
+
+	transitionButton := container.NewGridWrap(fyne.NewSize(140, 40),
+		widget.NewButtonWithIcon(
+			"Start Messaging",
+			iconTransition,
+			func() {
+				myWindow.Hide()
+				startMessenger(myApp)
+			},
+		),
+	)
+	centerTransButton := container.NewCenter(transitionButton)
+
 	languageContainer := container.NewVBox(
 		container.NewGridWrap(fyne.NewSize(60, 25), selectedLanguage),
+		centerTransButton,
 	)
 
 	logs := widget.NewRichText(&widget.TextSegment{
@@ -196,13 +215,13 @@ func InitUI(window fyne.Window) {
 
 	okButton := widget.NewButton("OK", func() {
 		if selectSource.Selected == "" {
-			dialog.ShowInformation("Error", "Select 'File' or 'Key'!", window)
+			dialog.ShowInformation("Error", "Select 'File' or 'Key'!", myWindow)
 			return
 		}
 
 		password := passwordEntry.Text
 		if password == "" {
-			dialog.ShowInformation("Error", "Enter a password!", window)
+			dialog.ShowInformation("Error", "Enter a password!", myWindow)
 			return
 		}
 
@@ -284,7 +303,7 @@ func InitUI(window fyne.Window) {
 				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
 				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
 				fmt.Println("Session keys loaded successfully")
-				dialog.ShowInformation("Success", "Keys loaded successfully!", window)
+				dialog.ShowInformation("Success", "Keys loaded successfully!", myWindow)
 				sessionKeyCount = 100
 
 				defer func() {
@@ -297,7 +316,7 @@ func InitUI(window fyne.Window) {
 						logs.Refresh()
 					}
 				}()
-			}, window)
+			}, myWindow)
 
 			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
 			fileDialog.Show()
@@ -379,7 +398,7 @@ func InitUI(window fyne.Window) {
 				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
 				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
 				fmt.Println("Session keys loaded successfully")
-				dialog.ShowInformation("Success", "Keys loaded successfully!", window)
+				dialog.ShowInformation("Success", "Keys loaded successfully!", myWindow)
 				sessionKeyCount = 100
 
 				defer func() {
@@ -392,7 +411,7 @@ func InitUI(window fyne.Window) {
 						logs.Refresh()
 					}
 				}()
-			}, window)
+			}, myWindow)
 
 			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
 			fileDialog.Show()
@@ -515,7 +534,7 @@ func InitUI(window fyne.Window) {
 			messageSend.SetText("")
 			fmt.Println("Cleared message field")
 
-			dialog.ShowInformation("Success", "Message encrypted successfully!", window)
+			dialog.ShowInformation("Success", "Message encrypted successfully!", myWindow)
 		},
 	)
 
@@ -538,7 +557,7 @@ func InitUI(window fyne.Window) {
 			regEntry.Show()
 			messageSend.Show()
 			createdMessageButton.Show()
-			animateResize(window, fyne.NewSize(570, 380))
+			animateResize(myWindow, fyne.NewSize(570, 380))
 		} else {
 			fromEntry.Hide()
 			toEntry.Hide()
@@ -546,7 +565,7 @@ func InitUI(window fyne.Window) {
 			regEntry.Hide()
 			messageSend.Hide()
 			createdMessageButton.Hide()
-			animateResize(window, fyne.NewSize(570, 300))
+			animateResize(myWindow, fyne.NewSize(570, 300))
 		}
 	})
 
@@ -611,7 +630,7 @@ func InitUI(window fyne.Window) {
 		iconEncrypt,
 		func() {
 			if len(session_keys) == 0 || len(session_keys[0]) == 0 {
-				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), window)
+				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), myWindow)
 				return
 			}
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
@@ -696,7 +715,7 @@ func InitUI(window fyne.Window) {
 					keyType = 0x01
 					rKey = useAndDeleteSessionKey(sessionKeyNumber)
 				default:
-					dialog.ShowError(fmt.Errorf("invalid key type selected: %s", selectedKeyType), window)
+					dialog.ShowError(fmt.Errorf("invalid key type selected: %s", selectedKeyType), myWindow)
 					return
 				}
 
@@ -774,11 +793,11 @@ func InitUI(window fyne.Window) {
 						Style: widget.RichTextStyleInline,
 					})
 					logs.Refresh()
-				}, window)
+				}, myWindow)
 
 				saveDialog.SetFileName("encrypted_file.bin")
 				saveDialog.Show()
-			}, window)
+			}, myWindow)
 			fileDialog.Show()
 		})
 
@@ -793,7 +812,7 @@ func InitUI(window fyne.Window) {
 		iconDecrypt,
 		func() {
 			if len(session_keys) == 0 || len(session_keys[0]) == 0 {
-				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), window)
+				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), myWindow)
 				return
 			}
 
@@ -993,7 +1012,7 @@ func InitUI(window fyne.Window) {
 						Style: widget.RichTextStyleInline,
 					})
 					logs.Refresh()
-				}, window)
+				}, myWindow)
 
 				switch fileType {
 				case 0x00:
@@ -1023,7 +1042,7 @@ func InitUI(window fyne.Window) {
 				}
 
 				saveDialog.Show()
-			}, window)
+			}, myWindow)
 
 			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
 			fileDialog.Show()
@@ -1040,7 +1059,7 @@ func InitUI(window fyne.Window) {
 		"Take a photo",
 		iconEncryptPhoto,
 		func() {
-			dialog.ShowInformation("Success", "Photo encrypted successfully!", window)
+			dialog.ShowInformation("Success", "Photo encrypted successfully!", myWindow)
 		})
 
 	iconEncryptVideo, err := fyne.LoadResourceFromPath("assets/takeVideo.png")
@@ -1053,7 +1072,7 @@ func InitUI(window fyne.Window) {
 		"Take a video",
 		iconEncryptVideo,
 		func() {
-			dialog.ShowInformation("Success", "Video encrypted successfully!", window)
+			dialog.ShowInformation("Success", "Video encrypted successfully!", myWindow)
 		})
 
 	buttonContainer := container.NewHBox(
@@ -1087,5 +1106,5 @@ func InitUI(window fyne.Window) {
 
 	content := container.NewStack(bgImage, mainUI)
 
-	window.SetContent(content)
+	myWindow.SetContent(content)
 }
