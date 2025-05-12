@@ -6,19 +6,24 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"maunium.net/go/mautrix/id"
 )
 
 func startMessenger(myApp fyne.App) {
-	telegramWindow := myApp.NewWindow("QalqanDS Messenger")
+
+	cfg := loadConfig("config.json")
+	client := mustLogin(cfg)
+	roomID := id.RoomID(cfg.RoomID)
+
+	telegramWindow := myApp.NewWindow("QalqanDS")
 	telegramWindow.Resize(fyne.NewSize(1100, 700))
 
-	// ---------- Sidebar (Чаты) ----------
 	sampleChats := []struct {
 		Name    string
 		Message string
 		Time    string
 	}{
-		{"Мама", "где ты?...", "8:02 PM"},
+		{"Мама", "где ты?...", "13:02"},
 	}
 
 	var chatItems []fyne.CanvasObject
@@ -39,7 +44,6 @@ func startMessenger(myApp fyne.App) {
 	chatSidebarContainer := container.NewVScroll(chatSidebar)
 	chatSidebarContainer.SetMinSize(fyne.NewSize(250, 700))
 
-	// ---------- Верх чата с кнопками звонка ----------
 	chatTitle := container.NewVBox(
 		widget.NewLabelWithStyle("Star 3.0", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewLabel("242 members, 112 online"),
@@ -47,6 +51,7 @@ func startMessenger(myApp fyne.App) {
 
 	audioCallBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), func() {
 		startVoiceCall()
+		printRoomMembers(client, roomID)
 	})
 	videoCallBtn := widget.NewButtonWithIcon("", theme.MediaVideoIcon(), func() {
 	})
@@ -54,12 +59,10 @@ func startMessenger(myApp fyne.App) {
 	callButtons := container.NewHBox(audioCallBtn, videoCallBtn)
 	chatHeader := container.NewBorder(nil, nil, nil, callButtons, chatTitle)
 
-	// ---------- Сообщения ----------
 	msgs := container.NewVBox()
 
 	msgScroll := container.NewVScroll(msgs)
 
-	// ---------- Ввод ----------
 	input := widget.NewEntry()
 	input.SetPlaceHolder("Write a message...")
 
@@ -73,13 +76,11 @@ func startMessenger(myApp fyne.App) {
 
 	inputBar := container.NewBorder(nil, nil, widget.NewIcon(theme.ConfirmIcon()), sendBtn, input)
 
-	// ---------- Фон чата ----------
 	bg := canvas.NewImageFromFile("assets/background.png")
 	bg.FillMode = canvas.ImageFillStretch
 
 	chatRight := container.NewBorder(chatHeader, inputBar, nil, nil, container.NewMax(bg, msgScroll))
 
-	// ---------- Главный layout ----------
 	mainSplit := container.NewHSplit(chatSidebarContainer, chatRight)
 	mainSplit.Offset = 0.25
 
@@ -87,7 +88,6 @@ func startMessenger(myApp fyne.App) {
 	telegramWindow.Show()
 }
 
-// ---------- Пузырёк сообщения ----------
 func messageBubble(sender string, text string, isDark bool) *fyne.Container {
 	name := widget.NewLabelWithStyle(sender, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	body := widget.NewLabel(text)
