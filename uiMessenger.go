@@ -16,7 +16,7 @@ func startMessenger(myApp fyne.App) {
 	roomID := id.RoomID(cfg.RoomID)
 
 	telegramWindow := myApp.NewWindow("QalqanDS")
-	telegramWindow.Resize(fyne.NewSize(1100, 700))
+	telegramWindow.Resize(fyne.NewSize(600, 400))
 
 	sampleChats := []struct {
 		Name    string

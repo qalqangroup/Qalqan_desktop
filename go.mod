@@ -6,12 +6,12 @@ toolchain go1.24.0
 
 require (
 	fyne.io/fyne/v2 v2.5.4
+	github.com/google/uuid v1.3.1
 	maunium.net/go/mautrix v0.23.3
 )
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/google/uuid v1.3.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pion/datachannel v1.5.8 // indirect

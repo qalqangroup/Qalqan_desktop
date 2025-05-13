@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pion/webrtc/v3"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
 
+// Config holds JSON configuration for the Matrix homeserver and user credentials.
 type Config struct {
 	Homeserver string `json:"homeserver"`
 	Username   string `json:"username"`
@@ -22,33 +23,33 @@ type Config struct {
 }
 
 var (
-	pendingCandidates []webrtc.ICECandidateInit
-	mu                sync.Mutex
+	currentCallID string
+	myPartyID     string
+	myUserID      id.UserID
 )
 
-func ptrString(s string) *string { return &s }
-func ptrUint16(i uint16) *uint16 { return &i }
-
+// startVoiceCall initializes Matrix client, WebRTC peer connection,
+// and orchestrates the full VoIP handshake (invite, answer, select_answer, ICE).
 func startVoiceCall() {
+	// Load configuration and login
 	cfg := loadConfig("config.json")
 	client := mustLogin(cfg)
-	roomID := id.RoomID(cfg.RoomID)
+	myUserID = client.UserID
+	myPartyID = uuid.New().String()
 
-	partyID := string(client.DeviceID)
-	callID := fmt.Sprintf("call-%d", time.Now().Unix())
-
+	// Create WebRTC peer connection with STUN
 	pc := mustCreatePeerConnection()
-
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
 
+	// 1) Send local ICE candidates to Matrix room
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
 			return
 		}
 		ice := c.ToJSON()
-		content := map[string]interface{}{
-			"call_id":  callID,
-			"party_id": partyID,
+		eventContent := map[string]interface{}{
+			"call_id":  currentCallID,
+			"party_id": myPartyID,
 			"version":  "1",
 			"candidates": []interface{}{map[string]interface{}{
 				"candidate":     ice.Candidate,
@@ -56,100 +57,183 @@ func startVoiceCall() {
 				"sdpMLineIndex": ice.SDPMLineIndex,
 			}},
 		}
-		if _, err := client.SendMessageEvent(
-			context.Background(),
-			roomID,
-			event.CallCandidates,
-			content,
-		); err != nil {
-			fmt.Println("Error sending m.call.candidates:", err)
-		}
+		client.SendMessageEvent(context.Background(), id.RoomID(cfg.RoomID), event.CallCandidates, eventContent)
 	})
 
-	syncer.OnEventType(event.CallAnswer, func(_ context.Context, ev *event.Event) {
-		raw := ev.Content.Raw
-		if raw["call_id"] != callID {
+	// 2) Auto-answer incoming invite if PC is stable
+	syncer.OnEventType(event.CallInvite, func(ctx context.Context, ev *event.Event) {
+		if ev.Sender == myUserID || pc.SignalingState() != webrtc.SignalingStateStable {
 			return
 		}
-		ans, _ := raw["answer"].(map[string]interface{})
-		sdp, _ := ans["sdp"].(string)
+		raw := ev.Content.Raw
+		callID, _ := raw["call_id"].(string)
+		offerMap, _ := raw["offer"].(map[string]interface{})
+		sdp, _ := offerMap["sdp"].(string)
+		remoteParty, _ := raw["party_id"].(string)
 
-		if err := pc.SetRemoteDescription(webrtc.SessionDescription{
-			Type: webrtc.SDPTypeAnswer,
-			SDP:  sdp,
-		}); err != nil {
+		currentCallID = callID
+
+		// Apply remote offer
+		if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 			fmt.Println("SetRemoteDescription error:", err)
 			return
 		}
 
-		mu.Lock()
-		for _, init := range pendingCandidates {
-			if err := pc.AddICECandidate(init); err != nil {
-				fmt.Println("Buffered AddICECandidate error:", err)
-			}
-		}
-		pendingCandidates = nil
-		mu.Unlock()
-
-		selectContent := map[string]interface{}{
-			"call_id":  callID,
-			"party_id": partyID,
-			"version":  "1",
-		}
-		if _, err := client.SendMessageEvent(
-			context.Background(),
-			roomID,
-			event.CallSelectAnswer,
-			selectContent,
-		); err != nil {
-			fmt.Println("Error sending m.call.select_answer:", err)
-		}
-	})
-
-	syncer.OnEventType(event.CallCandidates, func(_ context.Context, ev *event.Event) {
-		raw := ev.Content.Raw
-		if raw["call_id"] != callID {
+		// Create answer
+		answer, err := pc.CreateAnswer(nil)
+		if err != nil {
+			fmt.Println("CreateAnswer error:", err)
 			return
 		}
-		list, _ := raw["candidates"].([]interface{})
-		for _, ci := range list {
-			m, _ := ci.(map[string]interface{})
-			init := webrtc.ICECandidateInit{
-				Candidate:     m["candidate"].(string),
-				SDPMid:        ptrString(m["sdpMid"].(string)),
-				SDPMLineIndex: ptrUint16(uint16(m["sdpMLineIndex"].(float64))),
-			}
+		pc.SetLocalDescription(answer)
+		<-webrtc.GatheringCompletePromise(pc)
 
-			mu.Lock()
-			if pc.RemoteDescription() != nil {
-				_ = pc.AddICECandidate(init)
-			} else {
-				pendingCandidates = append(pendingCandidates, init)
-			}
-			mu.Unlock()
+		// Send m.call.answer
+		client.SendMessageEvent(ctx, id.RoomID(cfg.RoomID), event.CallAnswer, map[string]interface{}{
+			"call_id":  callID,
+			"party_id": myPartyID,
+			"version":  "1",
+			"answer": map[string]interface{}{
+				"type": answer.Type.String(),
+				"sdp":  answer.SDP,
+			},
+		})
+
+		// Send m.call.select_answer
+		client.SendMessageEvent(ctx, id.RoomID(cfg.RoomID), event.CallSelectAnswer, map[string]interface{}{
+			"call_id":           callID,
+			"party_id":          myPartyID,
+			"selected_party_id": remoteParty,
+			"version":           "1",
+		})
+
+		fmt.Println("✔️ Auto-answered call", callID)
+	})
+
+	// 3) Handle answers to our invite
+	syncer.OnEventType(event.CallAnswer, func(ctx context.Context, ev *event.Event) {
+		if ev.Sender == myUserID || pc.SignalingState() != webrtc.SignalingStateHaveLocalOffer {
+			return
+		}
+		raw := ev.Content.Raw
+		callID, _ := raw["call_id"].(string)
+		if callID != currentCallID {
+			return
+		}
+		ansMap, _ := raw["answer"].(map[string]interface{})
+		sdp, _ := ansMap["sdp"].(string)
+
+		// Apply remote answer
+		if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp}); err != nil {
+			fmt.Println("SetRemoteDescription error:", err)
+			return
+		}
+
+		// Finalize handshake
+		client.SendMessageEvent(ctx, id.RoomID(cfg.RoomID), event.CallSelectAnswer, map[string]interface{}{
+			"call_id":           callID,
+			"party_id":          myPartyID,
+			"selected_party_id": raw["party_id"].(string),
+			"version":           "1",
+		})
+
+		fmt.Println("✔️ Call established with", raw["party_id"].(string))
+	})
+
+	// 4) Handle remote ICE candidates
+	syncer.OnEventType(event.CallCandidates, func(ctx context.Context, ev *event.Event) {
+		if ev.Sender == myUserID {
+			return
+		}
+		raw := ev.Content.Raw
+		if raw["call_id"].(string) != currentCallID {
+			return
+		}
+		for _, ci := range raw["candidates"].([]interface{}) {
+			m := ci.(map[string]interface{})
+			pc.AddICECandidate(webrtc.ICECandidateInit{
+				Candidate:     m["candidate"].(string),
+				SDPMid:        toPtrString(m["sdpMid"].(string)),
+				SDPMLineIndex: toPtrUint16(m["sdpMLineIndex"].(float64)),
+			})
 		}
 	})
 
+	// Start sync loop
 	go func() {
 		if err := client.Sync(); err != nil {
 			panic(err)
 		}
 	}()
 
-	_, inviteContent := buildOffer(callID, partyID, pc)
-	if _, err := client.SendMessageEvent(
-		context.Background(),
-		roomID,
-		event.CallInvite,
-		inviteContent,
-	); err != nil {
-		panic(fmt.Errorf("sending m.call.invite: %w", err))
-	}
-	fmt.Println("🔔 Sent m.call.invite — waiting for answer…")
+	// 5) Initiate outgoing call
+	currentCallID = fmt.Sprintf("call-%d", time.Now().Unix())
+	offer, invite := buildOffer(currentCallID, pc)
+	invite["version"] = "1"
+	invite["party_id"] = myPartyID
+	client.SendMessageEvent(context.Background(), id.RoomID(cfg.RoomID), event.CallInvite, invite)
+	fmt.Println("🔔 Sent m.call.invite — waiting for answer… Offer SDP length:", len(offer.SDP))
 
+	// Block forever
 	select {}
 }
 
+// buildOffer creates and sends the SDP offer
+func buildOffer(callID string, pc *webrtc.PeerConnection) (webrtc.SessionDescription, map[string]interface{}) {
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		panic(err)
+	}
+	pc.SetLocalDescription(offer)
+	<-webrtc.GatheringCompletePromise(pc)
+	return offer, map[string]interface{}{
+		"call_id":  callID,
+		"lifetime": 60000,
+		"offer": map[string]interface{}{
+			"type": offer.Type.String(),
+			"sdp":  offer.SDP,
+		},
+	}
+}
+
+// mustCreatePeerConnection configures WebRTC with a public STUN server and logs states
+func mustCreatePeerConnection() *webrtc.PeerConnection {
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{{
+			URLs: []string{"stun:stun.l.google.com:19302"},
+		}},
+	}
+	pc, err := webrtc.NewPeerConnection(config)
+	if err != nil {
+		panic(err)
+	}
+	pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio)
+	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+		fmt.Println("ICE Connection State:", s)
+	})
+	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		fmt.Println("Peer Connection State:", s)
+	})
+	return pc
+}
+
+// mustLogin performs Matrix login and returns an authenticated client
+func mustLogin(cfg Config) *mautrix.Client {
+	client, err := mautrix.NewClient(cfg.Homeserver, "", "")
+	if err != nil {
+		panic(err)
+	}
+	req := &mautrix.ReqLogin{Type: "m.login.password", Identifier: mautrix.UserIdentifier{Type: "m.id.user", User: cfg.Username}, Password: cfg.Password}
+	resp, err := client.Login(context.Background(), req)
+	if err != nil {
+		panic(err)
+	}
+	client.SetCredentials(resp.UserID, resp.AccessToken)
+	fmt.Println("✔️ Logged in as", resp.UserID)
+	return client
+}
+
+// loadConfig reads JSON configuration from a file
 func loadConfig(path string) Config {
 	f, err := os.Open(path)
 	if err != nil {
@@ -163,69 +247,21 @@ func loadConfig(path string) Config {
 	return cfg
 }
 
-func mustLogin(cfg Config) *mautrix.Client {
-	client, err := mautrix.NewClient(cfg.Homeserver, "", "")
-	if err != nil {
-		panic(err)
-	}
-	resp, err := client.Login(context.Background(), &mautrix.ReqLogin{
-		Type: "m.login.password",
-		Identifier: mautrix.UserIdentifier{
-			Type: "m.id.user", User: cfg.Username,
-		},
-		Password:         cfg.Password,
-		StoreCredentials: true,
-	})
-	if err != nil {
-		panic(err)
-	}
-	client.SetCredentials(resp.UserID, resp.AccessToken)
-	fmt.Println("✔ Logged in as", resp.UserID)
-	return client
-}
+// toPtrString returns a pointer to the given string
+func toPtrString(s string) *string { return &s }
 
-func mustCreatePeerConnection() *webrtc.PeerConnection {
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		panic(err)
-	}
-	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
-		panic(err)
-	}
-	return pc
-}
-
-func buildOffer(
-	callID, partyID string,
-	pc *webrtc.PeerConnection,
-) (webrtc.SessionDescription, map[string]interface{}) {
-	offer, err := pc.CreateOffer(nil)
-	if err != nil {
-		panic(err)
-	}
-	if err := pc.SetLocalDescription(offer); err != nil {
-		panic(err)
-	}
-	<-webrtc.GatheringCompletePromise(pc)
-
-	content := map[string]interface{}{
-		"call_id":  callID,
-		"party_id": partyID,
-		"lifetime": 60000,
-		"version":  "1",
-		"offer": map[string]interface{}{
-			"type": offer.Type.String(),
-			"sdp":  offer.SDP,
-		},
-	}
-	return offer, content
-}
+// toPtrUint16 converts a float64 to uint16 pointer
+func toPtrUint16(f float64) *uint16 { u := uint16(f); return &u }
 
 func printRoomMembers(client *mautrix.Client, roomID id.RoomID) error {
-	resp, err := client.JoinedMembers(context.Background(), roomID)
+	resp, err := client.JoinedMembers(
+		context.Background(),
+		roomID,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to fetch joined members: %w", err)
 	}
+
 	fmt.Printf("Members in room %s:\n", roomID)
 	for userID, member := range resp.Joined {
 		display := string(userID)
