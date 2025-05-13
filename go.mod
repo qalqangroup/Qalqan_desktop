@@ -7,6 +7,7 @@ toolchain go1.24.0
 require (
 	fyne.io/fyne/v2 v2.5.4
 	github.com/google/uuid v1.3.1
+	github.com/pion/rtp v1.8.7
 	maunium.net/go/mautrix v0.23.3
 )
 
@@ -22,7 +23,6 @@ require (
 	github.com/pion/mdns v0.0.12 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/rtcp v1.2.14 // indirect
-	github.com/pion/rtp v1.8.7 // indirect
 	github.com/pion/sctp v1.8.19 // indirect
 	github.com/pion/sdp/v3 v3.0.9 // indirect
 	github.com/pion/srtp/v2 v2.0.20 // indirect
@@ -54,6 +54,7 @@ require (
 	github.com/go-text/render v0.2.0 // indirect
 	github.com/go-text/typesetting v0.2.1 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/gordonklaus/portaudio v0.0.0-20250206071425-98a94950218b
 	github.com/jeandeaual/go-locale v0.0.0-20241217141322-fcc2cadd6f08 // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
@@ -71,4 +72,5 @@ require (
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	layeh.com/gopus v0.0.0-20210501142526-1ee02d434e32
 )
