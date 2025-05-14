@@ -50,8 +50,8 @@ func startMessenger(myApp fyne.App) {
 	)
 
 	audioCallBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), func() {
-		startVoiceCall()
 		printRoomMembers(client, roomID)
+		startVoiceCall()
 	})
 	videoCallBtn := widget.NewButtonWithIcon("", theme.MediaVideoIcon(), func() {
 	})
