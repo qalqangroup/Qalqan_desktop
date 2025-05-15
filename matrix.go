@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,75 +42,133 @@ type Config struct {
 	RoomID     string `json:"room_id"`
 }
 
-func startVoiceCall() {
-	// 1) Load config & login
+func startCalling() {
+	// Load config and login
 	cfg := loadConfig("config.json")
 	client := mustLogin(cfg)
 	myUserID = client.UserID
-	myPartyID = uuid.New().String()
+	myPartyID = uuid.NewString()
 
-	// 2) Init PortAudio
+	// Init PortAudio
 	if err := portaudio.Initialize(); err != nil {
-		panic(err)
+		log.Fatalf("PortAudio init error: %v", err)
 	}
 	defer portaudio.Terminate()
 
-	// 3) Create PeerConnection (STUN+TURN)
-	pc := mustCreatePeerConnection()
-
-	// 4) Prepare Opus encoder & sendTrack
-	enc, err := gopus.NewEncoder(sampleRate, channels, gopus.Voip)
+	// Enumerate audio devices
+	hostApis, err := portaudio.HostApis()
 	if err != nil {
-		panic(err)
+		log.Fatalf("HostApis error: %v", err)
 	}
-	sendTrack, err := webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: sampleRate, Channels: channels},
-		"audio", "matrix-send",
-	)
-	if err != nil {
-		panic(err)
-	}
-	if _, err := pc.AddTrack(sendTrack); err != nil {
-		panic(err)
+	for _, host := range hostApis {
+		log.Printf("Host API: %s", host.Name)
+		for _, dev := range host.Devices {
+			log.Printf("  Device: %s | in:%d out:%d", dev.Name, dev.MaxInputChannels, dev.MaxOutputChannels)
+		}
 	}
 
-	// 5) Open mic stream (blocking read)
-	micBuf := make([]int16, frameSize*channels)
-	micStream, err := portaudio.OpenDefaultStream(channels, 0, sampleRate, frameSize, micBuf)
+	// Select USB mic and speaker
+	var inputDev, outputDev *portaudio.DeviceInfo
+	for _, host := range hostApis {
+		for _, dev := range host.Devices {
+			name := strings.ToLower(dev.Name)
+			if inputDev == nil && strings.Contains(name, "usb") && dev.MaxInputChannels >= channels {
+				inputDev = dev
+			}
+			if outputDev == nil && strings.Contains(name, "usb") && dev.MaxOutputChannels >= channels {
+				outputDev = dev
+			}
+		}
+	}
+	if inputDev == nil || outputDev == nil {
+		log.Fatalf("Failed to find USB mic or speaker: in=%v out=%v", inputDev, outputDev)
+	}
+
+	// PCM channels
+	dataCh := make(chan []int16, 50)
+	decodeCh := make(chan []int16, 50)
+
+	// Input stream
+	inParams := portaudio.LowLatencyParameters(inputDev, nil)
+	inParams.Input.Channels = channels
+	inParams.SampleRate = sampleRate
+	inParams.FramesPerBuffer = frameSize
+	micStream, err := portaudio.OpenStream(inParams, func(inBuf []int16) {
+		frame := append([]int16(nil), inBuf...)
+		select {
+		case dataCh <- frame:
+		default:
+		}
+	})
 	if err != nil {
-		panic(err)
+		log.Fatalf("OpenStream input error: %v", err)
 	}
 	defer micStream.Close()
 	if err := micStream.Start(); err != nil {
-		panic(err)
+		log.Fatalf("Start input stream error: %v", err)
+	}
+	log.Println("🎙 Mic stream started on", inputDev.Name)
+
+	// Output stream
+	outParams := portaudio.LowLatencyParameters(nil, outputDev)
+	outParams.Output.Channels = channels
+	outParams.SampleRate = sampleRate
+	outParams.FramesPerBuffer = frameSize
+	playStream, err := portaudio.OpenStream(outParams, func(outBuf []int16) {
+		select {
+		case pcm := <-decodeCh:
+			copy(outBuf, pcm)
+		default:
+		}
+	})
+	if err != nil {
+		log.Fatalf("OpenStream output error: %v", err)
+	}
+	defer playStream.Close()
+	if err := playStream.Start(); err != nil {
+		log.Fatalf("Start output stream error: %v", err)
+	}
+	log.Println("🔊 Playback stream started on", outputDev.Name)
+
+	// Create PeerConnection
+	pc := mustCreatePeerConnection()
+
+	// Opus encoder and sendTrack
+	enc, err := gopus.NewEncoder(sampleRate, channels, gopus.Voip)
+	if err != nil {
+		log.Fatalf("gopus NewEncoder error: %v", err)
+	}
+	sendTrack, err := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: sampleRate, Channels: channels},
+		"matrix-send", "audio",
+	)
+	if err != nil {
+		log.Fatalf("NewTrackLocalStaticSample error: %v", err)
+	}
+	if _, err := pc.AddTrack(sendTrack); err != nil {
+		log.Fatalf("AddTrack error: %v", err)
 	}
 
-	// 6) Only after connected → start sending
+	// Send loop
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		fmt.Println("PeerConnection state:", state)
 		if state == webrtc.PeerConnectionStateConnected {
 			go func() {
-				for {
-					// blocking read exactly frameSize samples
-					if err := micStream.Read(); err != nil {
-						fmt.Println("mic read error (overflow?):", err)
-						continue
-					}
-					// encode + send
-					pkt, err := enc.Encode(micBuf, frameSize, opusBufSize)
+				for pcm := range dataCh {
+					pkt, err := enc.Encode(pcm, frameSize, opusBufSize)
 					if err != nil {
-						fmt.Println("gopus encode error:", err)
+						log.Println("encode error:", err)
 						continue
 					}
+					log.Printf("sending %d bytes of Opus", len(pkt))
 					if err := sendTrack.WriteSample(media.Sample{Data: pkt, Duration: 20 * time.Millisecond}); err != nil {
-						fmt.Println("WriteSample error:", err)
+						log.Println("WriteSample error:", err)
 					}
 				}
 			}()
 		}
 	})
 
-	// 7) Receive & play remote audio
+	// Receive loop
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		if track.Kind() != webrtc.RTPCodecTypeAudio {
 			return
@@ -116,55 +176,37 @@ func startVoiceCall() {
 		sb := samplebuilder.New(10, &codecs.OpusPacket{}, track.Codec().ClockRate)
 		dec, err := gopus.NewDecoder(sampleRate, channels)
 		if err != nil {
-			panic(err)
+			log.Fatalf("gopus NewDecoder error: %v", err)
 		}
-		outBuf := make([]int16, frameSize*channels)
-		playStream, err := portaudio.OpenDefaultStream(0, channels, sampleRate, frameSize, outBuf)
-		if err != nil {
-			panic(err)
-		}
-		defer playStream.Close()
-		if err := playStream.Start(); err != nil {
-			panic(err)
-		}
-		fmt.Println("🔊 Remote audio started")
-		for {
-			rtpPkt, _, err := track.ReadRTP()
-			if err != nil {
-				return
-			}
-			sb.Push(rtpPkt)
+		go func() {
 			for {
-				s := sb.Pop()
-				if s == nil {
-					break
-				}
-				decoded, err := dec.Decode(s.Data, frameSize, false)
+				rtpPkt, _, err := track.ReadRTP()
 				if err != nil {
-					fmt.Println("gopus decode error:", err)
-					break
+					return
 				}
-				copy(outBuf, decoded)
-				playStream.Write()
+				sb.Push(rtpPkt)
+				for s := sb.Pop(); s != nil; s = sb.Pop() {
+					pcm, err := dec.Decode(s.Data, frameSize, false)
+					if err != nil {
+						log.Println("decode error:", err)
+						break
+					}
+					select {
+					case decodeCh <- pcm:
+					default:
+					}
+				}
 			}
-		}
+		}()
 	})
 
-	// 8) Debug ICE state
-	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-		fmt.Println("ICE state:", s)
-	})
-
-	// 9) Matrix signaling
-	syncer := client.Syncer.(*mautrix.DefaultSyncer)
-
-	// 9a) Outgoing ICE candidates
+	// Signaling
+	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) { log.Println("ICE state:", s) })
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
 			return
 		}
 		ice := c.ToJSON()
-		fmt.Println("→ ICE candidate:", ice.Candidate)
 		client.SendMessageEvent(context.Background(), id.RoomID(cfg.RoomID), event.CallCandidates, map[string]interface{}{
 			"call_id":  currentCallID,
 			"party_id": myPartyID,
@@ -177,7 +219,8 @@ func startVoiceCall() {
 		})
 	})
 
-	// 9b) Incoming ICE candidates
+	syncer := client.Syncer.(*mautrix.DefaultSyncer)
+	// Remote ICE
 	syncer.OnEventType(event.CallCandidates, func(ctx context.Context, ev *event.Event) {
 		if ev.Sender == myUserID {
 			return
@@ -188,155 +231,104 @@ func startVoiceCall() {
 		}
 		if arr, ok := raw["candidates"].([]interface{}); ok {
 			for _, it := range arr {
-				if m, ok := it.(map[string]interface{}); ok {
-					cand, _ := m["candidate"].(string)
-					mid, _ := m["sdpMid"].(string)
-					if idxF, ok := m["sdpMLineIndex"].(float64); ok {
-						idx := uint16(idxF)
-						pc.AddICECandidate(webrtc.ICECandidateInit{
-							Candidate:     cand,
-							SDPMid:        &mid,
-							SDPMLineIndex: &idx,
-						})
-					}
-				}
+				m := it.(map[string]interface{})
+				cand := m["candidate"].(string)
+				mid := m["sdpMid"].(string)
+				idx := uint16(m["sdpMLineIndex"].(float64))
+				_ = pc.AddICECandidate(webrtc.ICECandidateInit{Candidate: cand, SDPMid: &mid, SDPMLineIndex: &idx})
 			}
 		}
 	})
 
-	// 9c) Auto-answer incoming invites
+	// Handle invite
 	syncer.OnEventType(event.CallInvite, func(ctx context.Context, ev *event.Event) {
 		if ev.Sender == myUserID || pc.SignalingState() != webrtc.SignalingStateStable {
 			return
 		}
 		raw := ev.Content.Raw
-		callID, ok1 := raw["call_id"].(string)
-		offerMap, ok2 := raw["offer"].(map[string]interface{})
-		sdp, ok3 := offerMap["sdp"].(string)
+		cid, ok1 := raw["call_id"].(string)
+		off, ok2 := raw["offer"].(map[string]interface{})
+		sdp, ok3 := off["sdp"].(string)
 		party, ok4 := raw["party_id"].(string)
 		if !ok1 || !ok2 || !ok3 || !ok4 {
-			fmt.Println("Malformed invite")
 			return
 		}
-		currentCallID = callID
+		currentCallID = cid
 		pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp})
-		answer, _ := pc.CreateAnswer(nil)
-		pc.SetLocalDescription(answer)
+		ans, _ := pc.CreateAnswer(nil)
+		pc.SetLocalDescription(ans)
 		<-webrtc.GatheringCompletePromise(pc)
 		client.SendMessageEvent(ctx, id.RoomID(cfg.RoomID), event.CallAnswer, map[string]interface{}{
-			"call_id":  callID,
+			"call_id":  currentCallID,
 			"party_id": myPartyID,
 			"version":  "1",
-			"answer": map[string]interface{}{
-				"type": answer.Type.String(),
-				"sdp":  answer.SDP,
-			},
+			"answer":   map[string]interface{}{"type": ans.Type.String(), "sdp": ans.SDP},
 		})
 		client.SendMessageEvent(ctx, id.RoomID(cfg.RoomID), event.CallSelectAnswer, map[string]interface{}{
-			"call_id":           callID,
-			"party_id":          myPartyID,
-			"selected_party_id": party,
-			"version":           "1",
+			"call_id": currentCallID, "party_id": myPartyID, "selected_party_id": party, "version": "1",
 		})
-		fmt.Println("Answered call", callID)
 	})
 
-	// 9d) Handle answer to our invite
+	// Handle answer to our invite
 	syncer.OnEventType(event.CallAnswer, func(ctx context.Context, ev *event.Event) {
 		if ev.Sender == myUserID || pc.SignalingState() != webrtc.SignalingStateHaveLocalOffer {
 			return
 		}
 		raw := ev.Content.Raw
-		callID, ok1 := raw["call_id"].(string)
-		ansMap, ok2 := raw["answer"].(map[string]interface{})
-		sdp, ok3 := ansMap["sdp"].(string)
+		cid, ok1 := raw["call_id"].(string)
+		amap, ok2 := raw["answer"].(map[string]interface{})
+		sdp, ok3 := amap["sdp"].(string)
 		party, ok4 := raw["party_id"].(string)
-		if !ok1 || !ok2 || !ok3 || !ok4 || callID != currentCallID {
+		if !ok1 || !ok2 || !ok3 || !ok4 || cid != currentCallID {
 			return
 		}
 		pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp})
 		client.SendMessageEvent(ctx, id.RoomID(cfg.RoomID), event.CallSelectAnswer, map[string]interface{}{
-			"call_id":           callID,
-			"party_id":          myPartyID,
-			"selected_party_id": party,
-			"version":           "1",
+			"call_id": currentCallID, "party_id": myPartyID, "selected_party_id": party, "version": "1",
 		})
-		fmt.Println("Established call with", party)
 	})
 
-	// 10) Run sync forever
+	// Start sync
 	go func() {
 		for {
 			if err := client.Sync(); err != nil {
-				fmt.Println("Sync error:", err)
+				log.Println("Sync error:", err)
 				time.Sleep(syncRetryGap)
 			}
 		}
 	}()
 
-	// 11) Initiate call
+	// Call initiation
 	currentCallID = fmt.Sprintf("call-%d", time.Now().Unix())
 	offer, invite := buildOffer(currentCallID, pc)
 	invite["version"] = "1"
 	invite["party_id"] = myPartyID
 	client.SendMessageEvent(context.Background(), id.RoomID(cfg.RoomID), event.CallInvite, invite)
-	fmt.Printf("Sent invite, SDP len=%d\n", len(offer.SDP))
+	log.Printf("Sent invite, SDP len=%d", len(offer.SDP))
 
-	// block forever
-	select {}
-}
-
-func buildOffer(callID string, pc *webrtc.PeerConnection) (webrtc.SessionDescription, map[string]interface{}) {
-	offer, err := pc.CreateOffer(nil)
-	if err != nil {
-		panic(err)
-	}
-	if err := pc.SetLocalDescription(offer); err != nil {
-		panic(err)
-	}
-	<-webrtc.GatheringCompletePromise(pc)
-	return offer, map[string]interface{}{
-		"call_id":  callID,
-		"lifetime": 60000,
-		"offer": map[string]interface{}{
-			"type": offer.Type.String(),
-			"sdp":  offer.SDP,
-		},
-	}
+	select {} // block forever
 }
 
 func mustCreatePeerConnection() *webrtc.PeerConnection {
-	conf := webrtc.Configuration{
-		ICETransportPolicy: webrtc.ICETransportPolicyAll,
-		ICEServers: []webrtc.ICEServer{
-			{URLs: []string{"stun:stun.l.google.com:19302"}},
-			{
-				URLs:       []string{"turn:webqalqan.com:3478"},
-				Username:   "turnuser",
-				Credential: "turnpass",
-			},
-		},
-	}
+	conf := webrtc.Configuration{ICETransportPolicy: webrtc.ICETransportPolicyAll, ICEServers: []webrtc.ICEServer{
+		{URLs: []string{"stun:stun.l.google.com:19302"}},
+		{URLs: []string{"turn:webqalqan.com:3478"}, Username: "turnuser", Credential: "turnpass"},
+	}}
 	pc, err := webrtc.NewPeerConnection(conf)
 	if err != nil {
-		panic(err)
+		log.Fatalf("NewPeerConnection error: %v", err)
 	}
-	pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio)
 	return pc
 }
 
 func mustLogin(cfg Config) *mautrix.Client {
 	client, err := mautrix.NewClient(cfg.Homeserver, "", "")
 	if err != nil {
-		panic(err)
+		log.Fatalf("mautrix NewClient error: %v", err)
 	}
-	resp, err := client.Login(context.Background(), &mautrix.ReqLogin{
-		Type:       "m.login.password",
-		Identifier: mautrix.UserIdentifier{Type: "m.id.user", User: cfg.Username},
-		Password:   cfg.Password,
-	})
+	resp, err := client.Login(context.Background(), &mautrix.ReqLogin{Type: "m.login.password", Identifier: mautrix.UserIdentifier{Type: "m.id.user", User: cfg.Username}, Password: cfg.Password})
 	if err != nil {
-		panic(err)
+		log.Fatalf("Login error: %v", err)
 	}
 	client.SetCredentials(resp.UserID, resp.AccessToken)
 	return client
@@ -345,14 +337,27 @@ func mustLogin(cfg Config) *mautrix.Client {
 func loadConfig(path string) Config {
 	f, err := os.Open(path)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Open config error: %v", err)
 	}
 	defer f.Close()
 	var cfg Config
 	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		panic(err)
+		log.Fatalf("Decode config error: %v", err)
 	}
 	return cfg
+}
+
+func buildOffer(callID string, pc *webrtc.PeerConnection) (webrtc.SessionDescription, map[string]interface{}) {
+	off, err := pc.CreateOffer(nil)
+	if err != nil {
+		log.Fatalf("CreateOffer error: %v", err)
+	}
+	if err := pc.SetLocalDescription(off); err != nil {
+		log.Fatalf("SetLocalDescription error: %v", err)
+	}
+	<-webrtc.GatheringCompletePromise(pc)
+	invite := map[string]interface{}{"call_id": callID, "lifetime": 60000, "offer": map[string]interface{}{"type": off.Type.String(), "sdp": off.SDP}}
+	return off, invite
 }
 
 func printRoomMembers(client *mautrix.Client, roomID id.RoomID) {
