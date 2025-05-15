@@ -42,7 +42,7 @@ type Config struct {
 	RoomID     string `json:"room_id"`
 }
 
-func startCalling() {
+func audioCall() {
 	// Load config and login
 	cfg := loadConfig("config.json")
 	client := mustLogin(cfg)
@@ -358,20 +358,4 @@ func buildOffer(callID string, pc *webrtc.PeerConnection) (webrtc.SessionDescrip
 	<-webrtc.GatheringCompletePromise(pc)
 	invite := map[string]interface{}{"call_id": callID, "lifetime": 60000, "offer": map[string]interface{}{"type": off.Type.String(), "sdp": off.SDP}}
 	return off, invite
-}
-
-func printRoomMembers(client *mautrix.Client, roomID id.RoomID) {
-	resp, err := client.JoinedMembers(context.Background(), roomID)
-	if err != nil {
-		fmt.Println("JoinedMembers error:", err)
-		return
-	}
-	fmt.Printf("Members in %s:\n", roomID)
-	for uid, m := range resp.Joined {
-		name := string(uid)
-		if m.DisplayName != "" {
-			name = fmt.Sprintf("%s (%s)", m.DisplayName, uid)
-		}
-		fmt.Println(" •", name)
-	}
 }
