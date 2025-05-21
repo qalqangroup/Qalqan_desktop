@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
@@ -19,49 +20,130 @@ import (
 	"maunium.net/go/mautrix/id"
 )
 
-// startMessenger запускает UI для обмена сообщениями через Matrix
-func startMessenger(myApp fyne.App) {
-	ctx := context.Background()
+func getMessageBody(ev *event.Event) string {
+	if body, ok := ev.Content.Raw["body"].(string); ok {
+		return body
+	}
+	return ""
+}
 
-	// Загрузка конфигурации и авторизация
+func makeBubble(text string, right bool) fyne.CanvasObject {
+	label := widget.NewLabel(text)
+	label.Wrapping = fyne.TextWrapOff
+
+	if right {
+		label.Alignment = fyne.TextAlignTrailing
+		label.TextStyle.Bold = false
+	} else {
+		label.Alignment = fyne.TextAlignLeading
+	}
+
+	bgColor := theme.ButtonColor()
+	if right {
+		bgColor = theme.PrimaryColor()
+	}
+	bg := canvas.NewRectangle(bgColor)
+	bg.CornerRadius = 8
+
+	padded := container.NewPadded(label)
+
+	bubble := container.NewMax(bg, padded)
+
+	if right {
+		return container.NewHBox(layout.NewSpacer(), bubble)
+	}
+	return container.NewHBox(bubble, layout.NewSpacer())
+}
+
+func makeDateSeparator(date string) fyne.CanvasObject {
+	txt := canvas.NewText(date, theme.TextColor())
+	txt.TextSize = 12
+	rect := canvas.NewRectangle(theme.ButtonColor())
+	rect.CornerRadius = 10
+	rect.SetMinSize(fyne.NewSize(80, 20))
+	chip := container.NewMax(rect, container.NewCenter(txt))
+	return container.NewHBox(layout.NewSpacer(), chip, layout.NewSpacer())
+}
+
+func startMessenger(myApp fyne.App) {
+	bgImage := canvas.NewImageFromFile("assets/background.png")
+	bgImage.FillMode = canvas.ImageFillStretch
+
+	icon, err := fyne.LoadResourceFromPath("assets/icon.ico")
+	if err != nil {
+		fmt.Println("Error:", err)
+	} else {
+		myApp.SetIcon(icon)
+	}
+
+	ctx := context.Background()
 	cfg := loadConfig("config.json")
 	client := mustLogin(cfg)
+	_ = client.SetPresence(ctx, mautrix.ReqPresence{Presence: "online"})
 
-	// Устанавливаем присутствие online
-	req := mautrix.ReqPresence{Presence: "online", StatusMsg: ""}
-	if err := client.SetPresence(ctx, req); err != nil {
-		log.Println("Failed to set presence:", err)
-	}
+	var (
+		mu           sync.Mutex
+		history      = container.NewVBox()
+		chatScroller = container.NewVScroll(history)
+		selectedRoom id.RoomID
+		prevToken    string
+	)
+	chatScroller.SetMinSize(fyne.NewSize(250, 500))
 
-	// Создаём окно приложения
+	syncer := client.Syncer.(*mautrix.DefaultSyncer)
+	syncer.OnEventType(event.EventMessage, func(ctx context.Context, ev *event.Event) {
+		body := getMessageBody(ev)
+		log.Printf("LIVE: %s, %s: %s", ev.RoomID, ev.Sender, body)
+		if ev.Sender == client.UserID {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if ev.RoomID != selectedRoom {
+			return
+		}
+		fyne.Do(func() {
+			history.Add(makeBubble(body, ev.Sender == client.UserID))
+			history.Refresh()
+			chatScroller.Refresh()
+			fyne.Do(func() {
+				chatScroller.ScrollToBottom()
+			})
+		})
+	})
+
+	go func() {
+		for {
+			if err := client.Sync(); err != nil {
+				log.Println("Sync error:", err)
+			}
+			time.Sleep(time.Second)
+		}
+	}()
+
 	win := myApp.NewWindow("QalqanDS")
-	win.Resize(fyne.NewSize(600, 400))
+	win.Resize(fyne.NewSize(600, 500))
+	win.CenterOnScreen()
 
-	// Получаем список присоединённых комнат
 	jr, err := client.JoinedRooms(ctx)
 	if err != nil {
-		dialog.ShowError(fmt.Errorf("JoinedRooms error: %w", err), win)
+		dialog.ShowError(err, win)
 		return
 	}
-
-	// Структура для хранения ID и имени
 	type Room struct {
 		ID   id.RoomID
 		Name string
 	}
-	var rooms []Room
-	for _, rid := range jr.JoinedRooms {
-		// Получаем имя комнаты
-		var nameEvt event.RoomNameEventContent
-		err := client.StateEvent(ctx, rid, event.StateRoomName, "", &nameEvt)
+	rooms := make([]Room, len(jr.JoinedRooms))
+	for i, rid := range jr.JoinedRooms {
+		var rn event.RoomNameEventContent
+		_ = client.StateEvent(ctx, rid, event.StateRoomName, "", &rn)
 		name := string(rid)
-		if err == nil && nameEvt.Name != "" {
-			name = nameEvt.Name
+		if rn.Name != "" {
+			name = rn.Name
 		}
-		rooms = append(rooms, Room{ID: rid, Name: name})
+		rooms[i] = Room{ID: rid, Name: name}
 	}
-
-	// UI: список комнат
 	roomsList := widget.NewList(
 		func() int { return len(rooms) },
 		func() fyne.CanvasObject { return widget.NewLabel("") },
@@ -70,108 +152,104 @@ func startMessenger(myApp fyne.App) {
 		},
 	)
 
-	// UI: чат и ввод сообщений
-	chatBox := widget.NewMultiLineEntry()
-	chatBox.Disable()
-	msgEntry := widget.NewEntry()
-	msgEntry.SetPlaceHolder("Type message...")
-	sendBtn := widget.NewButton("Send", nil)
-
-	// Компоновка панели ввода
-	controls := container.NewBorder(
-		nil, nil, nil, sendBtn,
-		msgEntry,
-	)
-	// Основной контейнер чата
-	chatContainer := container.NewBorder(nil,
-		controls,
-		nil, nil,
-		chatBox,
-	)
-	// Разделитель между списком и чатом
-	split := container.NewHSplit(roomsList, chatContainer)
-	split.SetOffset(0.25)
-
-	iconCall, err := fyne.LoadResourceFromPath("assets/call.png")
+	iconSwitchCall, err := fyne.LoadResourceFromPath("assets/call.png")
 	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
-		iconCall = theme.CancelIcon()
+		fmt.Println("Error loading icon:", err)
+		iconSwitchCall = theme.CancelIcon()
 	}
 
-	// Создаём кнопку аудиозвонка в правом верхнем углу
-	audioBtn := widget.NewButtonWithIcon("", iconCall, func() {
-		infoCalling(myApp, "Tessay", "avatar.png")
-		audioCall()
+	audioBtn := widget.NewButtonWithIcon("", iconSwitchCall, func() {
+		switchCall(myApp)
 	})
+	videoBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
+	topBar := container.NewHBox(layout.NewSpacer(), audioBtn, videoBtn)
 
-	// Верхняя панель: пространство + кнопка звонка
-	topBar := container.NewHBox(
-		layout.NewSpacer(),
-		audioBtn,
-	)
+	msgEntry := widget.NewEntry()
+	msgEntry.SetPlaceHolder("Type message...")
+	sendBtn := widget.NewButtonWithIcon("", theme.MailSendIcon(), nil)
+	inputRow := container.NewBorder(nil, nil, nil, sendBtn, msgEntry)
 
-	// Финальный layout: topBar сверху, split под ним
-	final := container.NewBorder(topBar, nil, nil, nil, split)
-	win.SetContent(final)
+	rightPane := container.NewBorder(nil, inputRow, nil, nil, chatScroller)
+	split := container.NewHSplit(roomsList, rightPane)
+	split.SetOffset(0.25)
+	win.SetContent(container.NewBorder(topBar, nil, nil, nil, split))
+	win.Show()
 
-	// Состояние выбранной комнаты
-	var mu sync.Mutex
-	var selectedRoom id.RoomID
-
-	// Настройка Syncer для новых сообщений
-	syncer := client.Syncer.(*mautrix.DefaultSyncer)
-	syncer.OnEventType(event.EventMessage, func(cctx context.Context, ev *event.Event) {
-		mu.Lock()
-		curr := selectedRoom
-		mu.Unlock()
-		if ev.RoomID != curr || ev.Type != event.EventMessage {
-			return
-		}
-		chatBox.SetText(chatBox.Text + string(ev.Sender) + ": " + ev.Content.AsMessage().Body + "\n")
-	})
-
-	// Фоновый цикл синхронизации
-	go func() {
-		for {
-			if err := client.Sync(); err != nil {
-				log.Println("Sync error:", err)
-			}
-			time.Sleep(5 * time.Second)
-		}
-	}()
-
-	// Обработка выбора комнаты
 	roomsList.OnSelected = func(i widget.ListItemID) {
 		mu.Lock()
 		selectedRoom = rooms[i].ID
 		mu.Unlock()
 
-		// Загрузка последних сообщений
+		history.Objects = nil
+		history.Refresh()
+
 		resp, err := client.Messages(ctx, selectedRoom, "", "", mautrix.DirectionBackward, nil, 50)
 		if err != nil {
 			dialog.ShowError(err, win)
 			return
 		}
-		// Обновление чата
-		content := ""
+		prevToken = resp.Start
+
+		log.Printf("История: %d событий", len(resp.Chunk))
+		for i, ev := range resp.Chunk {
+			log.Printf("Event #%d: Type=%s, Sender=%s, Raw=%+v", i, ev.Type, ev.Sender, ev.Content)
+		}
+
+		history.Add(widget.NewButton("Load more", func() {
+			mu.Lock()
+			more, err := client.Messages(ctx, selectedRoom, prevToken, "", mautrix.DirectionBackward, nil, 50)
+			mu.Unlock()
+			if err != nil || len(more.Chunk) == 0 {
+				return
+			}
+			prevToken = more.Start
+			mu.Lock()
+			for idx := len(more.Chunk) - 1; idx >= 0; idx-- {
+				ev := more.Chunk[idx]
+				if ev.Type == event.EventMessage {
+					body := getMessageBody(ev)
+					history.Objects = append(
+						[]fyne.CanvasObject{makeBubble(body, ev.Sender == client.UserID)},
+						history.Objects...,
+					)
+				}
+			}
+			history.Refresh()
+			chatScroller.ScrollToTop()
+			mu.Unlock()
+		}))
+
+		history.Add(makeDateSeparator(time.Now().Format("Jan 2, 2006")))
+
 		for idx := len(resp.Chunk) - 1; idx >= 0; idx-- {
 			ev := resp.Chunk[idx]
 			if ev.Type == event.EventMessage {
-				content += fmt.Sprintf("%s: %s\n", ev.Sender, ev.Content.AsMessage().Body)
+				body := getMessageBody(ev)
+				history.Add(makeBubble(body, ev.Sender == client.UserID))
 			}
 		}
-		chatBox.SetText(content)
+		history.Refresh()
+		chatScroller.ScrollToBottom()
 
-		// Настройка отправки сообщений
 		sendBtn.OnTapped = func() {
-			if text := msgEntry.Text; text != "" {
-				if _, err := client.SendText(ctx, selectedRoom, text); err != nil {
-					dialog.ShowError(err, win)
-				} else {
-					msgEntry.SetText("")
-				}
+			text := msgEntry.Text
+			if text == "" {
+				return
 			}
+			if _, err := client.SendText(ctx, selectedRoom, text); err != nil {
+				dialog.ShowError(err, win)
+				return
+			}
+			mu.Lock()
+			history.Add(makeBubble(text, true))
+			mu.Unlock()
+			history.Refresh()
+			msgEntry.SetText("")
+			chatScroller.ScrollToBottom()
 		}
 	}
-	win.Show()
+
+	if len(rooms) > 0 {
+		roomsList.Select(0)
+	}
 }

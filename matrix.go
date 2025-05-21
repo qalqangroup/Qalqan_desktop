@@ -24,7 +24,7 @@ import (
 const (
 	sampleRate   = 48000
 	channels     = 1
-	frameSize    = 960 // 20ms @48kHz
+	frameSize    = 960
 	opusBufSize  = 4000
 	syncRetryGap = time.Second
 )
@@ -42,20 +42,17 @@ type Config struct {
 	RoomID     string `json:"room_id"`
 }
 
-func audioCall() {
-	// Load config and login
+func audioCallMatrix() {
 	cfg := loadConfig("config.json")
 	client := mustLogin(cfg)
 	myUserID = client.UserID
 	myPartyID = uuid.NewString()
 
-	// Init PortAudio
 	if err := portaudio.Initialize(); err != nil {
 		log.Fatalf("PortAudio init error: %v", err)
 	}
 	defer portaudio.Terminate()
 
-	// Enumerate audio devices
 	hostApis, err := portaudio.HostApis()
 	if err != nil {
 		log.Fatalf("HostApis error: %v", err)
@@ -67,7 +64,6 @@ func audioCall() {
 		}
 	}
 
-	// Select USB mic and speaker
 	var inputDev, outputDev *portaudio.DeviceInfo
 	for _, host := range hostApis {
 		for _, dev := range host.Devices {
@@ -84,11 +80,9 @@ func audioCall() {
 		log.Fatalf("Failed to find USB mic or speaker: in=%v out=%v", inputDev, outputDev)
 	}
 
-	// PCM channels
 	dataCh := make(chan []int16, 50)
 	decodeCh := make(chan []int16, 50)
 
-	// Input stream
 	inParams := portaudio.LowLatencyParameters(inputDev, nil)
 	inParams.Input.Channels = channels
 	inParams.SampleRate = sampleRate
@@ -107,9 +101,8 @@ func audioCall() {
 	if err := micStream.Start(); err != nil {
 		log.Fatalf("Start input stream error: %v", err)
 	}
-	log.Println("🎙 Mic stream started on", inputDev.Name)
+	log.Println("Mic stream started on", inputDev.Name)
 
-	// Output stream
 	outParams := portaudio.LowLatencyParameters(nil, outputDev)
 	outParams.Output.Channels = channels
 	outParams.SampleRate = sampleRate
@@ -128,12 +121,10 @@ func audioCall() {
 	if err := playStream.Start(); err != nil {
 		log.Fatalf("Start output stream error: %v", err)
 	}
-	log.Println("🔊 Playback stream started on", outputDev.Name)
+	log.Println("Playback stream started on", outputDev.Name)
 
-	// Create PeerConnection
 	pc := mustCreatePeerConnection()
 
-	// Opus encoder and sendTrack
 	enc, err := gopus.NewEncoder(sampleRate, channels, gopus.Voip)
 	if err != nil {
 		log.Fatalf("gopus NewEncoder error: %v", err)
@@ -149,7 +140,6 @@ func audioCall() {
 		log.Fatalf("AddTrack error: %v", err)
 	}
 
-	// Send loop
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateConnected {
 			go func() {
@@ -168,7 +158,6 @@ func audioCall() {
 		}
 	})
 
-	// Receive loop
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		if track.Kind() != webrtc.RTPCodecTypeAudio {
 			return
@@ -200,7 +189,6 @@ func audioCall() {
 		}()
 	})
 
-	// Signaling
 	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) { log.Println("ICE state:", s) })
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
@@ -220,7 +208,7 @@ func audioCall() {
 	})
 
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
-	// Remote ICE
+
 	syncer.OnEventType(event.CallCandidates, func(ctx context.Context, ev *event.Event) {
 		if ev.Sender == myUserID {
 			return
@@ -240,7 +228,6 @@ func audioCall() {
 		}
 	})
 
-	// Handle invite
 	syncer.OnEventType(event.CallInvite, func(ctx context.Context, ev *event.Event) {
 		if ev.Sender == myUserID || pc.SignalingState() != webrtc.SignalingStateStable {
 			return
@@ -269,7 +256,6 @@ func audioCall() {
 		})
 	})
 
-	// Handle answer to our invite
 	syncer.OnEventType(event.CallAnswer, func(ctx context.Context, ev *event.Event) {
 		if ev.Sender == myUserID || pc.SignalingState() != webrtc.SignalingStateHaveLocalOffer {
 			return
@@ -288,7 +274,6 @@ func audioCall() {
 		})
 	})
 
-	// Start sync
 	go func() {
 		for {
 			if err := client.Sync(); err != nil {
@@ -298,7 +283,6 @@ func audioCall() {
 		}
 	}()
 
-	// Call initiation
 	currentCallID = fmt.Sprintf("call-%d", time.Now().Unix())
 	offer, invite := buildOffer(currentCallID, pc)
 	invite["version"] = "1"
@@ -306,7 +290,7 @@ func audioCall() {
 	client.SendMessageEvent(context.Background(), id.RoomID(cfg.RoomID), event.CallInvite, invite)
 	log.Printf("Sent invite, SDP len=%d", len(offer.SDP))
 
-	select {} // block forever
+	select {}
 }
 
 func mustCreatePeerConnection() *webrtc.PeerConnection {
