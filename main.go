@@ -23,9 +23,7 @@ func main() {
 3. Add support russian and kazakh languages.
 ------------------------------------------------------------
 					UX/UI tasks:
-1. Make the design convenient similar to telegram;
-2. Add a separate window to select a call by audio or video;
-3  Add settings button;
-4. implement video call via WEBRTC.
+1. Add settings button on the top in the uiMessenger.go;
+2. Implement video call via WEBRTC.
 ------------------------------------------------------------
 */

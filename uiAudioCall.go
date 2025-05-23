@@ -11,9 +11,10 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-func audioCallingInWindow(myApp fyne.App, calleeName, avatarPath string) {
-	win := myApp.NewWindow("Calling " + calleeName)
-	win.Resize(fyne.NewSize(200, 200))
+func audioCallingInWindow(myApp fyne.App, avatarPath string) {
+	win := myApp.NewWindow("Calling")
+	win.Resize(fyne.NewSize(250, 250))
+	win.CenterOnScreen()
 
 	avatarRes, err := fyne.LoadResourceFromPath(avatarPath)
 	var avatarImg *canvas.Image
@@ -24,9 +25,9 @@ func audioCallingInWindow(myApp fyne.App, calleeName, avatarPath string) {
 		avatarImg = canvas.NewImageFromResource(avatarRes)
 	}
 	avatarImg.FillMode = canvas.ImageFillContain
-	avatarImg.SetMinSize(fyne.NewSize(100, 100))
+	avatarImg.SetMinSize(fyne.NewSize(150, 150))
 
-	nameLabel := widget.NewLabelWithStyle(calleeName, fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	nameLabel := widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 
 	timerLabel := widget.NewLabel("00:00")
 
@@ -60,4 +61,5 @@ func audioCallingInWindow(myApp fyne.App, calleeName, avatarPath string) {
 
 	win.SetContent(content)
 	win.Show()
+	audioCallMatrix()
 }

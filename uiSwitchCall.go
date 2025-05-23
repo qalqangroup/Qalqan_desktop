@@ -23,8 +23,9 @@ func switchCall(myApp fyne.App) {
 	}
 
 	win := myApp.NewWindow(" ")
-	win.Resize(fyne.NewSize(400, 400))
+	win.Resize(fyne.NewSize(350, 350))
 	win.CenterOnScreen()
+	win.SetFixedSize(true)
 
 	avatar := canvas.NewImageFromFile("assets/avatar.png")
 	avatar.FillMode = canvas.ImageFillContain
@@ -56,7 +57,8 @@ func switchCall(myApp fyne.App) {
 		myApp.Quit()
 	})
 	callBtn := widget.NewButtonWithIcon("", iconAudioCall, func() {
-		audioCallMatrix()
+		win.Hide()
+		audioCallingInWindow(myApp, "assets/avatar.png")
 	})
 
 	videoBox := container.NewVBox(

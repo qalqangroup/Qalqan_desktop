@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"log"
 	"sync"
 	"time"
@@ -28,25 +29,24 @@ func getMessageBody(ev *event.Event) string {
 }
 
 func makeBubble(text string, right bool) fyne.CanvasObject {
-	label := widget.NewLabel(text)
-	label.Wrapping = fyne.TextWrapOff
-
+	txt := canvas.NewText(text, theme.TextColor())
 	if right {
-		label.Alignment = fyne.TextAlignTrailing
-		label.TextStyle.Bold = false
+		txt.Alignment = fyne.TextAlignTrailing
 	} else {
-		label.Alignment = fyne.TextAlignLeading
+		txt.Alignment = fyne.TextAlignLeading
 	}
+	txt.TextSize = theme.TextSize()
 
-	bgColor := theme.ButtonColor()
+	var bgColor color.Color
 	if right {
-		bgColor = theme.PrimaryColor()
+		bgColor = color.NRGBA{R: 0xAD, G: 0xD8, B: 0xE6, A: 0xFF}
+	} else {
+		bgColor = color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}
 	}
 	bg := canvas.NewRectangle(bgColor)
 	bg.CornerRadius = 8
 
-	padded := container.NewPadded(label)
-
+	padded := container.NewPadded(txt)
 	bubble := container.NewMax(bg, padded)
 
 	if right {
@@ -88,7 +88,8 @@ func startMessenger(myApp fyne.App) {
 		selectedRoom id.RoomID
 		prevToken    string
 	)
-	chatScroller.SetMinSize(fyne.NewSize(250, 500))
+	chatScroller = container.NewVScroll(history)
+	chatScroller.SetMinSize(fyne.NewSize(0, 500))
 
 	syncer := client.Syncer.(*mautrix.DefaultSyncer)
 	syncer.OnEventType(event.EventMessage, func(ctx context.Context, ev *event.Event) {
@@ -105,10 +106,8 @@ func startMessenger(myApp fyne.App) {
 		fyne.Do(func() {
 			history.Add(makeBubble(body, ev.Sender == client.UserID))
 			history.Refresh()
-			chatScroller.Refresh()
-			fyne.Do(func() {
-				chatScroller.ScrollToBottom()
-			})
+			chatScroller.ScrollToBottom()
+			myApp.SetIcon(icon)
 		})
 	})
 
@@ -146,23 +145,44 @@ func startMessenger(myApp fyne.App) {
 	}
 	roomsList := widget.NewList(
 		func() int { return len(rooms) },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() fyne.CanvasObject {
+			t := canvas.NewText("", color.White)
+			t.Alignment = fyne.TextAlignLeading
+			return t
+		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
-			o.(*widget.Label).SetText(rooms[i].Name)
+			t := o.(*canvas.Text)
+			t.Text = rooms[i].Name
+			t.Color = color.White
+			t.Refresh()
 		},
 	)
+	roomsList.Refresh()
 
 	iconSwitchCall, err := fyne.LoadResourceFromPath("assets/call.png")
 	if err != nil {
 		fmt.Println("Error loading icon:", err)
 		iconSwitchCall = theme.CancelIcon()
 	}
-
-	audioBtn := widget.NewButtonWithIcon("", iconSwitchCall, func() {
+	switchBtn := widget.NewButtonWithIcon("", iconSwitchCall, func() {
 		switchCall(myApp)
 	})
-	videoBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
-	topBar := container.NewHBox(layout.NewSpacer(), audioBtn, videoBtn)
+
+	iconInterfaceMenu, err := fyne.LoadResourceFromPath("assets/interfaceMenu.png")
+	if err != nil {
+		fmt.Println("Error loading icon:", err)
+		iconInterfaceMenu = theme.CancelIcon()
+	}
+	interfaceMenuBtn := widget.NewButtonWithIcon("", iconInterfaceMenu, func() {
+		// interfaceMenu(myApp)
+		dialog.ShowInformation(
+			"Interface settings",
+			"Interface settings will be here",
+			win,
+		)
+	})
+
+	topBar := container.NewHBox(layout.NewSpacer(), switchBtn, interfaceMenuBtn)
 
 	msgEntry := widget.NewEntry()
 	msgEntry.SetPlaceHolder("Type message...")
@@ -172,7 +192,8 @@ func startMessenger(myApp fyne.App) {
 	rightPane := container.NewBorder(nil, inputRow, nil, nil, chatScroller)
 	split := container.NewHSplit(roomsList, rightPane)
 	split.SetOffset(0.25)
-	win.SetContent(container.NewBorder(topBar, nil, nil, nil, split))
+	mainContent := container.NewBorder(topBar, nil, nil, nil, split)
+	win.SetContent(container.NewMax(bgImage, mainContent))
 	win.Show()
 
 	roomsList.OnSelected = func(i widget.ListItemID) {
@@ -229,7 +250,11 @@ func startMessenger(myApp fyne.App) {
 			}
 		}
 		history.Refresh()
-		chatScroller.ScrollToBottom()
+		chatScroller.Refresh()
+
+		fyne.Do(func() {
+			chatScroller.ScrollToBottom()
+		})
 
 		sendBtn.OnTapped = func() {
 			text := msgEntry.Text
