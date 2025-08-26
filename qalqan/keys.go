@@ -42,37 +42,63 @@ func Hash512(value string) [32]byte {
 }
 
 func LoadSessionKeys(data []byte, ostream *bytes.Buffer, rKey []byte, session_keys *[][100][32]byte) {
-	readSessionKeys := make([]byte, DEFAULT_KEY_LEN)
-	var usr_cnt int
-	usr_cnt = len(data) - DEFAULT_KEY_LEN - 10*DEFAULT_KEY_LEN - BLOCKLEN
-	usr_cnt = usr_cnt / (100 * DEFAULT_KEY_LEN)
+	const perUser = 100 * DEFAULT_KEY_LEN
+
+	rem := ostream.Len()
+	if rem < BLOCKLEN {
+		fmt.Println("LoadSessionKeys: not enough data (no room for IMIT)")
+		return
+	}
+	sessBytes := rem - BLOCKLEN
+	if sessBytes%perUser != 0 {
+		fmt.Printf("LoadSessionKeys: malformed length: %d is not multiple of %d\n", sessBytes, perUser)
+		return
+	}
+	usr_cnt := sessBytes / perUser
+	if usr_cnt <= 0 || usr_cnt > 255 {
+		fmt.Printf("LoadSessionKeys: suspicious user count: %d\n", usr_cnt)
+		return
+	}
+
 	*session_keys = make([][100][32]byte, usr_cnt)
-	for k := 0; k < usr_cnt; k++ {
+
+	readSessionKey := make([]byte, DEFAULT_KEY_LEN)
+	for u := 0; u < usr_cnt; u++ {
 		for i := 0; i < 100; i++ {
-			_, err := ostream.Read(readSessionKeys[:DEFAULT_KEY_LEN])
+			n, err := ostream.Read(readSessionKey[:DEFAULT_KEY_LEN])
 			if err != nil {
-				fmt.Println("Error reading session key:", err)
+				fmt.Println("LoadSessionKeys: error reading session key:", err)
+				return
+			}
+			if n != DEFAULT_KEY_LEN {
+				fmt.Println("LoadSessionKeys: unexpected EOF in session key")
 				return
 			}
 			for j := 0; j < DEFAULT_KEY_LEN; j += BLOCKLEN {
-				DecryptOFB(readSessionKeys[j:j+BLOCKLEN], rKey, 32, 16, readSessionKeys[j:j+BLOCKLEN])
+				DecryptOFB(readSessionKey[j:j+BLOCKLEN], rKey, DEFAULT_KEY_LEN, BLOCKLEN, readSessionKey[j:j+BLOCKLEN])
 			}
-			copy((*session_keys)[k][i][:], readSessionKeys[:])
+			copy((*session_keys)[u][i][:], readSessionKey[:])
 		}
 	}
 }
 
 func LoadCircleKeys(data []byte, ostream *bytes.Buffer, rKey []byte, circle_keys *[10][32]byte) {
-	readCircleKey := make([]byte, DEFAULT_KEY_LEN)
 	*circle_keys = [10][32]byte{}
+
+	if ostream.Len() < 10*DEFAULT_KEY_LEN {
+		fmt.Printf("LoadCircleKeys: not enough data for 10 circle keys (have %d)\n", ostream.Len())
+		return
+	}
+
+	readCircleKey := make([]byte, DEFAULT_KEY_LEN)
 	for i := 0; i < 10; i++ {
 		n, err := ostream.Read(readCircleKey[:DEFAULT_KEY_LEN])
 		if err != nil {
-			fmt.Printf("failed to read circular key %d: %v\n", i, err)
+			fmt.Printf("LoadCircleKeys: failed to read circle key %d: %v\n", i, err)
 			return
 		}
-		if n < DEFAULT_KEY_LEN {
-			fmt.Printf("unexpected EOF while reading circular key %d\n", i)
+		if n != DEFAULT_KEY_LEN {
+			fmt.Printf("LoadCircleKeys: unexpected EOF while reading circle key %d\n", i)
 			return
 		}
 		for j := 0; j < DEFAULT_KEY_LEN; j += BLOCKLEN {

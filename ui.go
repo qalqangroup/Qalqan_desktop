@@ -3,13 +3,15 @@ package main
 import (
 	"QalqanDS/qalqan"
 	"bytes"
+	crand "crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"io"
-	"math/rand"
+	mrand "math/rand"
 	"path/filepath"
 	"strings"
 	"time"
@@ -46,24 +48,56 @@ func animateResize(window fyne.Window, newSize fyne.Size) {
 }
 
 func useAndDeleteSessionKey(sessionKeyNumber int) []uint8 {
-	if len(session_keys) == 0 || len(session_keys[0]) == 0 {
+	if len(session_keys) == 0 {
 		fmt.Println("No session keys available")
 		return nil
 	}
-
 	if sessionKeyNumber < 0 || sessionKeyNumber >= len(session_keys[0]) {
 		fmt.Println("Invalid session key index")
 		return nil
 	}
 
-	key := session_keys[0][sessionKeyNumber][:qalqan.DEFAULT_KEY_LEN]
-	rkey := make([]uint8, qalqan.EXPKLEN)
-	qalqan.Kexp(key, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rkey)
-	for i := 0; i < qalqan.DEFAULT_KEY_LEN; i++ {
-		session_keys[0][sessionKeyNumber][i] = 0
+	idx := sessionKeyNumber
+	found := false
+	for i := 0; i < 100; i++ {
+		try := (sessionKeyNumber + i) % 100
+		zero := true
+		for j := 0; j < qalqan.DEFAULT_KEY_LEN; j++ {
+			if session_keys[0][try][j] != 0 {
+				zero = false
+				break
+			}
+		}
+		if !zero {
+			idx = try
+			found = true
+			break
+		}
+	}
+	if !found {
+		session_keys = session_keys[1:]
+		fmt.Println("No session keys available")
+		return nil
 	}
 
-	if len(session_keys[0]) == 0 {
+	key := session_keys[0][idx][:qalqan.DEFAULT_KEY_LEN]
+	rkey := make([]uint8, qalqan.EXPKLEN)
+	qalqan.Kexp(key, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rkey)
+
+	for i := 0; i < qalqan.DEFAULT_KEY_LEN; i++ {
+		session_keys[0][idx][i] = 0
+	}
+
+	allZero := true
+	for i := 0; i < 100 && allZero; i++ {
+		for j := 0; j < qalqan.DEFAULT_KEY_LEN; j++ {
+			if session_keys[0][i][j] != 0 {
+				allZero = false
+				break
+			}
+		}
+	}
+	if allZero {
 		session_keys = session_keys[1:]
 	}
 
@@ -71,10 +105,11 @@ func useAndDeleteSessionKey(sessionKeyNumber int) []uint8 {
 }
 
 func useAndDeleteCircleKey(circleKeyNumber int) []uint8 {
-	if len(circle_keys) == 0 || len(circle_keys[0]) == 0 {
-		fmt.Println("No circle keys available")
+	if circleKeyNumber < 0 || circleKeyNumber >= len(circle_keys) {
+		fmt.Println("Invalid circle key index")
 		return nil
 	}
+	// при желании можно проверить, что ключ не весь из нулей
 	key := circle_keys[circleKeyNumber][:qalqan.DEFAULT_KEY_LEN]
 	rkey := make([]uint8, qalqan.EXPKLEN)
 	qalqan.Kexp(key, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rkey)
@@ -108,7 +143,6 @@ var rimitkey []byte
 var selectedKeyType string = "Circular"
 
 func InitUI(myApp fyne.App, myWindow fyne.Window) {
-
 	bgImage := canvas.NewImageFromFile("assets/background.png")
 	bgImage.FillMode = canvas.ImageFillStretch
 
@@ -121,16 +155,12 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 	selectedLanguage := widget.NewSelect(
 		[]string{"KZ", "RU", "EN"},
-		func(selected string) {
-			fmt.Println("Language selected:", selected)
-
-		},
+		func(selected string) { fmt.Println("Language selected:", selected) },
 	)
-
 	selectedLanguage.SetSelected("EN")
 	selectedLanguage.PlaceHolder = "Select language"
 
-	iconTransition, err := fyne.LoadResourceFromPath("assets/messaging.png")
+		iconTransition, err := fyne.LoadResourceFromPath("assets/messaging.png")
 	if err != nil {
 		fmt.Println("Ошибка загрузки иконки:", err)
 		iconTransition = theme.CancelIcon()
@@ -178,10 +208,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 	})
 	bgHash.SetMinSize(fyne.NewSize(470, 40))
 
-	hashValue := widget.NewRichText(&widget.TextSegment{
-		Style: widget.RichTextStyleInline,
-	})
-
+	hashValue := widget.NewRichText(&widget.TextSegment{Style: widget.RichTextStyleInline})
 	hashBox := container.NewStack(bgHash, container.NewCenter(hashValue))
 
 	hashContainer := container.NewVBox(
@@ -218,7 +245,6 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 			dialog.ShowInformation("Error", "Select 'File' or 'Key'!", myWindow)
 			return
 		}
-
 		password := passwordEntry.Text
 		if password == "" {
 			dialog.ShowInformation("Error", "Enter a password!", myWindow)
@@ -228,23 +254,14 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 		switch selectSource.Selected {
 		case "File":
 			keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
-
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Error opening file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error opening file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
 				if reader == nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "No file selected.",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "No file selected.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
@@ -252,53 +269,43 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 				data, err := io.ReadAll(reader)
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Failed to read file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Failed to read file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
+
 				ostream := bytes.NewBuffer(data)
 				kikey := make([]byte, qalqan.DEFAULT_KEY_LEN)
 				ostream.Read(kikey[:qalqan.DEFAULT_KEY_LEN])
+
 				key := qalqan.Hash512(password)
 				keyBytes := hex.EncodeToString(key[:])
-				hashValue.Segments = []widget.RichTextSegment{
-					&widget.TextSegment{
-						Text:  keyBytes,
-						Style: widget.RichTextStyleInline,
-					},
-				}
+				hashValue.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: keyBytes, Style: widget.RichTextStyleInline}}
 				hashValue.Refresh()
+
 				qalqan.Kexp(key[:], qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rKey)
 				for i := 0; i < qalqan.DEFAULT_KEY_LEN; i += qalqan.BLOCKLEN {
 					qalqan.DecryptOFB(kikey[i:i+qalqan.BLOCKLEN], rKey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, kikey[i:i+qalqan.BLOCKLEN])
 				}
+
 				if len(data) < qalqan.BLOCKLEN {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "The file is too short",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "The file is too short", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
+
 				imitstream := bytes.NewBuffer(data)
 				imitFile := make([]byte, qalqan.BLOCKLEN)
 				qalqan.Kexp(kikey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rimitkey)
 				qalqan.Qalqan_Imit(uint64(len(data)-qalqan.BLOCKLEN), rimitkey, imitstream, imitFile)
 				rimit := make([]byte, qalqan.BLOCKLEN)
 				imitstream.Read(rimit[:qalqan.BLOCKLEN])
-				if !bytes.Equal(rimit, imitFile) {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "The file is corrupted",
-						Style: widget.RichTextStyleInline,
-					})
+				if subtle.ConstantTimeCompare(rimit, imitFile) != 1 {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "The file is corrupted", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
+					return
 				}
+
 				circle_keys = [10][qalqan.DEFAULT_KEY_LEN]byte{}
 				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
 				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
@@ -308,38 +315,24 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 				defer func() {
 					if r := recover(); r != nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "File open failed: " + fmt.Sprintf("%v", r),
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "File open failed: " + fmt.Sprintf("%v", r), Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 					}
 				}()
 			}, myWindow)
-
 			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
 			fileDialog.Show()
 
 		case "Key":
 			keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
-
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Error opening file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error opening file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
 				if reader == nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "No file selected.",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "No file selected.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
@@ -347,53 +340,43 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 				data, err := io.ReadAll(reader)
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Failed to read file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Failed to read file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
+
 				ostream := bytes.NewBuffer(data)
 				kikey := make([]byte, qalqan.DEFAULT_KEY_LEN)
 				ostream.Read(kikey[:qalqan.DEFAULT_KEY_LEN])
+
 				key := qalqan.Hash512(password)
 				keyBytes := hex.EncodeToString(key[:])
-				hashValue.Segments = []widget.RichTextSegment{
-					&widget.TextSegment{
-						Text:  keyBytes,
-						Style: widget.RichTextStyleInline,
-					},
-				}
+				hashValue.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: keyBytes, Style: widget.RichTextStyleInline}}
 				hashValue.Refresh()
+
 				qalqan.Kexp(key[:], qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rKey)
 				for i := 0; i < qalqan.DEFAULT_KEY_LEN; i += qalqan.BLOCKLEN {
 					qalqan.DecryptOFB(kikey[i:i+qalqan.BLOCKLEN], rKey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, kikey[i:i+qalqan.BLOCKLEN])
 				}
+
 				if len(data) < qalqan.BLOCKLEN {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "The file is too short",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "The file is too short", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
+
 				imitstream := bytes.NewBuffer(data)
 				imitFile := make([]byte, qalqan.BLOCKLEN)
 				qalqan.Kexp(kikey, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rimitkey)
 				qalqan.Qalqan_Imit(uint64(len(data)-qalqan.BLOCKLEN), rimitkey, imitstream, imitFile)
 				rimit := make([]byte, qalqan.BLOCKLEN)
 				imitstream.Read(rimit[:qalqan.BLOCKLEN])
-				if !bytes.Equal(rimit, imitFile) {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "The file is corrupted",
-						Style: widget.RichTextStyleInline,
-					})
+				if subtle.ConstantTimeCompare(rimit, imitFile) != 1 {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "The file is corrupted", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
+					return
 				}
+
 				circle_keys = [10][qalqan.DEFAULT_KEY_LEN]byte{}
 				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
 				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
@@ -403,23 +386,17 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 				defer func() {
 					if r := recover(); r != nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "File open failed: " + fmt.Sprintf("%v", r),
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "File open failed: " + fmt.Sprintf("%v", r), Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 					}
 				}()
 			}, myWindow)
-
 			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
 			fileDialog.Show()
 		}
 	})
 
 	okButton.Disable()
-
 	validateInputs := func() {
 		if selectSource.Selected != "" && passwordEntry.Text != "" {
 			okButton.Enable()
@@ -427,14 +404,8 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 			okButton.Disable()
 		}
 	}
-
-	selectSource.OnChanged = func(value string) {
-		validateInputs()
-	}
-
-	passwordEntry.OnChanged = func(value string) {
-		validateInputs()
-	}
+	selectSource.OnChanged = func(string) { validateInputs() }
+	passwordEntry.OnChanged = func(string) { validateInputs() }
 
 	topRow := container.NewHBox(
 		layout.NewSpacer(),
@@ -473,30 +444,21 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 	fromEntry := widget.NewEntry()
 	fromEntry.SetPlaceHolder("From")
 	fromEntry.Hide()
-
 	toEntry := widget.NewEntry()
 	toEntry.SetPlaceHolder("To")
 	toEntry.Hide()
-
 	dateEntry := widget.NewEntry()
 	dateEntry.SetPlaceHolder("Date")
 	dateEntry.Hide()
-
 	regEntry := widget.NewEntry()
 	regEntry.SetPlaceHolder("Registration No.")
 	regEntry.Hide()
 
-	tableBar := container.NewGridWithColumns(4,
-		fromEntry,
-		toEntry,
-		dateEntry,
-		regEntry,
-	)
+	tableBar := container.NewGridWithColumns(4, fromEntry, toEntry, dateEntry, regEntry)
 
 	outputLabel := widget.NewMultiLineEntry()
 	outputLabel.SetMinRowsVisible(6)
 	outputLabel.Disable()
-
 	updateOutput := func() {
 		outputLabel.SetText(
 			"From: " + fromEntry.Text + "\n" +
@@ -505,12 +467,10 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				"Registration No.: " + regEntry.Text,
 		)
 	}
-
 	fromEntry.OnChanged = func(string) { updateOutput() }
 	toEntry.OnChanged = func(string) { updateOutput() }
 	dateEntry.OnChanged = func(string) { updateOutput() }
 	regEntry.OnChanged = func(string) { updateOutput() }
-
 	updateOutput()
 
 	messageSend := widget.NewMultiLineEntry()
@@ -526,18 +486,15 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 		fmt.Println("Ошибка загрузки иконки:", err)
 		iconEncrMessage = theme.CancelIcon()
 	}
-
 	createdMessageButton := widget.NewButtonWithIcon(
 		"Encrypt a message",
 		iconEncrMessage,
 		func() {
 			messageSend.SetText("")
 			fmt.Println("Cleared message field")
-
 			dialog.ShowInformation("Success", "Message encrypted successfully!", myWindow)
 		},
 	)
-
 	createdMessageButton.Hide()
 	centeredButtonMessage := container.NewCenter(createdMessageButton)
 
@@ -549,7 +506,6 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 	customMessage := widget.NewRadioGroup([]string{"Custom message"}, func(selected string) {
 		isEnabled := selected == "Custom message"
-
 		if isEnabled {
 			fromEntry.Show()
 			toEntry.Show()
@@ -571,9 +527,8 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 	selectModeEntry := widget.NewSelect(
 		[]string{"OFB", "ECB"},
-		func(selected string) {
-			fmt.Println("Выбран режим:", selected)
-		})
+		func(selected string) { fmt.Println("Выбран режим:", selected) },
+	)
 	selectModeEntry.PlaceHolder = "Select mode"
 	selectModeEntry.Disable()
 
@@ -585,7 +540,6 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 		}
 	})
 	modeExperts.SetSelected("")
-
 	smallSelectModeEntry := container.NewCenter(container.NewGridWrap(fyne.NewSize(170, 40), selectModeEntry))
 
 	rightContainer := container.NewVBox(
@@ -600,7 +554,6 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 			fmt.Println("Key type selected:", selected)
 		},
 	)
-
 	keyTypeSelect.SetSelected(selectedKeyType)
 	keyTypeSelect.PlaceHolder = "Select key type"
 
@@ -629,26 +582,19 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 		"Encrypt a file",
 		iconEncrypt,
 		func() {
-			if len(session_keys) == 0 || len(session_keys[0]) == 0 {
+			if len(session_keys) == 0 {
 				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), myWindow)
 				return
 			}
+
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Error opening file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error opening file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
 				if reader == nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "No file selected.",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "No file selected.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
@@ -656,38 +602,41 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 				data, err := io.ReadAll(reader)
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Failed to read file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Failed to read file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
-
 				ostream := bytes.NewBuffer(data)
 
 				defer func() {
 					if r := recover(); r != nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Encryption failed: " + fmt.Sprintf("%v", r),
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Encryption failed: " + fmt.Sprintf("%v", r), Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 					}
 				}()
 
 				iv := make([]byte, qalqan.BLOCKLEN)
-				for i := range qalqan.BLOCKLEN {
-					iv[i] = byte(rand.Intn(256))
+				if _, err := crand.Read(iv); err != nil {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Failed to generate IV: " + err.Error(), Style: widget.RichTextStyleInline}}
+					logs.Refresh()
+					return
+				}
+
+				isZero := true
+				for _, b := range rimitkey {
+					if b != 0 {
+						isZero = false
+						break
+					}
+				}
+				if isZero {
+					dialog.ShowError(fmt.Errorf("MAC key is not initialized; load keys first"), myWindow)
+					return
 				}
 
 				var fileType byte
-
 				path := reader.URI().Path()
 				ext := filepath.Ext(path)
-
 				switch strings.ToLower(ext) {
 				case ".jpg", ".jpeg", ".png", ".bmp", ".gif":
 					fileType = 0x88
@@ -704,8 +653,8 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				userNumber := 1
 				var keyType byte
 
-				circleKeyNumber := rand.Intn(10)
-				sessionKeyNumber := rand.Intn(100)
+				circleKeyNumber := mrand.Intn(10)
+				sessionKeyNumber := mrand.Intn(100)
 
 				switch selectedKeyType {
 				case "Circular":
@@ -720,11 +669,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				}
 
 				if rKey == nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "No session key available for encryption.",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "No session key available for encryption.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
@@ -742,56 +687,38 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 				cipherTextStream := &bytes.Buffer{}
 				qalqan.EncryptOFB_File(len(data), rKey, iv, ostream, cipherTextStream)
-				cipherText := cipherTextStream.Bytes()
-				writeBuf.Write(cipherText)
+				writeBuf.Write(cipherTextStream.Bytes())
 
 				fileContent := writeBuf.Bytes()
 				fileImit := make([]byte, qalqan.BLOCKLEN)
 				qalqan.Qalqan_Imit(uint64(len(fileContent)), rimitkey, bytes.NewReader(fileContent), fileImit)
-
 				writeBuf.Write(fileImit)
+
 				saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 					if err != nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Error saving file: " + err.Error(),
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error saving file: " + err.Error(), Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 						return
 					}
-
 					if writer == nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "No file selected for saving.",
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "No file selected for saving.", Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 						return
 					}
 					defer writer.Close()
 
-					_, err = writer.Write(writeBuf.Bytes())
-					if err != nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Failed to save encrypted file: " + err.Error(),
-							Style: widget.RichTextStyleInline,
-						})
+					if _, err = writer.Write(writeBuf.Bytes()); err != nil {
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Failed to save encrypted file: " + err.Error(), Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 						return
 					}
 
-					if sessionKeyCount > 0 {
+					if selectedKeyType == "Session" && sessionKeyCount > 0 {
 						sessionKeyCount--
 						keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 					}
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "File successfully encrypted and saved!",
-						Style: widget.RichTextStyleInline,
-					})
+
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "File successfully encrypted and saved!", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 				}, myWindow)
 
@@ -799,7 +726,8 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				saveDialog.Show()
 			}, myWindow)
 			fileDialog.Show()
-		})
+		},
+	)
 
 	iconDecrypt, err := fyne.LoadResourceFromPath("assets/decrypt.png")
 	if err != nil {
@@ -811,50 +739,33 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 		"Decrypt a file",
 		iconDecrypt,
 		func() {
-			if len(session_keys) == 0 || len(session_keys[0]) == 0 {
+			if len(session_keys) == 0 {
 				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), myWindow)
 				return
 			}
 
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Error opening file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error opening file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
 				if reader == nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "No file selected.",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "No file selected.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
-
 				defer reader.Close()
 
 				data, err := io.ReadAll(reader)
 				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Failed to read file: " + err.Error(),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Failed to read file: " + err.Error(), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
 
 				if len(data) < qalqan.BLOCKLEN {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Invalid file: too small.",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Invalid file: too small.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
@@ -862,102 +773,61 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				imitstreamDecrypt := bytes.NewBuffer(data)
 				imitFileDecrypt := make([]byte, qalqan.BLOCKLEN)
 				qalqan.Qalqan_Imit(uint64(len(data)-qalqan.BLOCKLEN), rimitkey, imitstreamDecrypt, imitFileDecrypt)
-
 				rimit := make([]byte, qalqan.BLOCKLEN)
-				_, err = imitstreamDecrypt.Read(rimit[:qalqan.BLOCKLEN])
-				if err != nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Failed to read integrity check block.",
-						Style: widget.RichTextStyleInline,
-					})
+				if _, err = imitstreamDecrypt.Read(rimit[:qalqan.BLOCKLEN]); err != nil {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Failed to read integrity check block.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
-
-				if !bytes.Equal(rimit, imitFileDecrypt) {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "The file is corrupted",
-						Style: widget.RichTextStyleInline,
-					})
+				if subtle.ConstantTimeCompare(rimit, imitFileDecrypt) != 1 {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "The file is corrupted", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
 
 				fileInfo := data[:qalqan.BLOCKLEN]
 				storedImit := data[1*qalqan.BLOCKLEN : 2*qalqan.BLOCKLEN]
-
 				computedImit := make([]byte, qalqan.BLOCKLEN)
 				qalqan.Qalqan_Imit(qalqan.BLOCKLEN, rimitkey, bytes.NewBuffer(fileInfo), computedImit)
-
-				if !bytes.Equal(computedImit, storedImit) {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "File info is corrupted!",
-						Style: widget.RichTextStyleInline,
-					})
+				if subtle.ConstantTimeCompare(computedImit, storedImit) != 1 {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "File info is corrupted!", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
-
 				userNumber := fileInfo[1]
+				_ = userNumber
 				fileType := fileInfo[4]
 				keyType := fileInfo[5]
 				circleKeyNumber := int(fileInfo[6])
 				sessionKeyNumber := int(fileInfo[7])
 
-				keyGenerated := false
-				_ = userNumber
-
-				if !keyGenerated {
-					switch keyType {
-					case 0x00:
-						rKey = useAndDeleteCircleKey(circleKeyNumber)
-					case 0x01:
-						rKey = useAndDeleteSessionKey(sessionKeyNumber)
-					default:
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  fmt.Sprintf("Error: unknown key type 0x%X", keyType),
-							Style: widget.RichTextStyleInline,
-						})
-						logs.Refresh()
-						return
-					}
-					keyGenerated = true
+				switch keyType {
+				case 0x00:
+					rKey = useAndDeleteCircleKey(circleKeyNumber)
+				case 0x01:
+					rKey = useAndDeleteSessionKey(sessionKeyNumber)
+				default:
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: fmt.Sprintf("Error: unknown key type 0x%X", keyType), Style: widget.RichTextStyleInline}}
+					logs.Refresh()
+					return
 				}
-
 				if rKey == nil {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "No decryption key available.",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "No decryption key available.", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
 
 				defer func() {
 					if r := recover(); r != nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Decryption failed: " + fmt.Sprintf("%v", r),
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Decryption failed: " + fmt.Sprintf("%v", r), Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 					}
 				}()
 
 				start := 3 * qalqan.BLOCKLEN
 				end := len(data) - qalqan.BLOCKLEN
-
 				if end <= start {
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Error: Not enough data to decrypt!",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error: Not enough data to decrypt!", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
@@ -969,74 +839,49 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				thirdBlockEnd := thirdBlockStart + qalqan.BLOCKLEN
 				ivDecr := data[thirdBlockStart:thirdBlockEnd]
 
-				qalqan.DecryptOFB_File(len(trimmedData), rKey, ivDecr, bytes.NewReader(trimmedData), sstream)
+				if err := qalqan.DecryptOFB_File(len(trimmedData), rKey, ivDecr, bytes.NewReader(trimmedData), sstream); err != nil {
+					logs.Segments = append(logs.Segments, &widget.TextSegment{Text: "Decryption failed: " + err.Error(), Style: widget.RichTextStyleInline})
+					logs.Refresh()
+					return
+				}
 
-				logs.Segments = []widget.RichTextSegment{}
-				logs.Segments = append(logs.Segments, &widget.TextSegment{
-					Style: widget.RichTextStyleInline,
-				})
+				logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Style: widget.RichTextStyleInline}}
 				logs.Refresh()
 
 				saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 					if err != nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "Error saving file: " + err.Error(),
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error saving file: " + err.Error(), Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 						return
 					}
 					if writer == nil {
-						logs.Segments = []widget.RichTextSegment{}
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "File not selected.",
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "File not selected.", Style: widget.RichTextStyleInline}}
 						logs.Refresh()
 						return
 					}
 					defer writer.Close()
 
 					if _, err := writer.Write(sstream.Bytes()); err != nil {
-						logs.Segments = append(logs.Segments, &widget.TextSegment{
-							Text:  "File write error: " + err.Error(),
-							Style: widget.RichTextStyleInline,
-						})
+						logs.Segments = append(logs.Segments, &widget.TextSegment{Text: "File write error: " + err.Error(), Style: widget.RichTextStyleInline})
 						logs.Refresh()
 						return
 					}
 
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "The file has been successfully decrypted and saved!",
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = append(logs.Segments, &widget.TextSegment{Text: "The file has been successfully decrypted and saved!", Style: widget.RichTextStyleInline})
 					logs.Refresh()
 				}, myWindow)
 
 				switch fileType {
-				case 0x00:
-					timestamp := time.Now().Format("2006-01-02_15-04")
-					saveDialog.SetFileName(fmt.Sprintf("File_%s.txt", timestamp))
-				case 0x77:
-					timestamp := time.Now().Format("2006-01-02_15-04")
-					saveDialog.SetFileName(fmt.Sprintf("File_%s.jpeg", timestamp))
+				case 0x00, 0x77:
+					saveDialog.SetFileName("File_" + time.Now().Format("2006-01-02_15-04") + ".bin")
 				case 0x88:
-					timestamp := time.Now().Format("2006-01-02_15-04")
-					saveDialog.SetFileName(fmt.Sprintf("Image_%s.mp4", timestamp))
+					saveDialog.SetFileName("Image_" + time.Now().Format("2006-01-02_15-04") + ".jpg")
 				case 0x66:
-					timestamp := time.Now().Format("2006-01-02_15-04")
-					saveDialog.SetFileName(fmt.Sprintf("Text_%s.txt", timestamp))
-
+					saveDialog.SetFileName("Text_" + time.Now().Format("2006-01-02_15-04") + ".txt")
 				case 0x55:
-					timestamp := time.Now().Format("2006-01-02_15-04")
-					saveDialog.SetFileName(fmt.Sprintf("Audio_%s.mp3", timestamp))
+					saveDialog.SetFileName("Audio_" + time.Now().Format("2006-01-02_15-04") + ".mp3")
 				default:
-					logs.Segments = []widget.RichTextSegment{}
-					logs.Segments = append(logs.Segments, &widget.TextSegment{
-						Text:  "Unknown file type: 0x" + fmt.Sprintf("%X", fileType),
-						Style: widget.RichTextStyleInline,
-					})
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Unknown file type: 0x" + fmt.Sprintf("%X", fileType), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
@@ -1054,26 +899,22 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 		fmt.Println("Error loading icon:", err)
 		iconEncryptPhoto = theme.CancelIcon()
 	}
-
 	encryptImageButton := widget.NewButtonWithIcon(
 		"Take a photo",
 		iconEncryptPhoto,
-		func() {
-			dialog.ShowInformation("Success", "Photo encrypted successfully!", myWindow)
-		})
+		func() { dialog.ShowInformation("Success", "Photo encrypted successfully!", myWindow) },
+	)
 
 	iconEncryptVideo, err := fyne.LoadResourceFromPath("assets/takeVideo.png")
 	if err != nil {
 		fmt.Println("Error loading icon:", err)
 		iconEncryptVideo = theme.CancelIcon()
 	}
-
 	encryptVideoButton := widget.NewButtonWithIcon(
 		"Take a video",
 		iconEncryptVideo,
-		func() {
-			dialog.ShowInformation("Success", "Video encrypted successfully!", myWindow)
-		})
+		func() { dialog.ShowInformation("Success", "Video encrypted successfully!", myWindow) },
+	)
 
 	buttonContainer := container.NewHBox(
 		layout.NewSpacer(),
@@ -1105,6 +946,5 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 	)
 
 	content := container.NewStack(bgImage, mainUI)
-
 	myWindow.SetContent(content)
 }

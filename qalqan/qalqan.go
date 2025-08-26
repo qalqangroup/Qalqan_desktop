@@ -1,19 +1,5 @@
 package qalqan
 
-/*key := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, // etalon key
-				0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-			    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-				0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f}
-
-data := []uint8{0x10, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, // etalon data
-		 		 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}
-res := make([]uint8, 16)
-data2 := make([]uint8, 16)
-
-qalqan.Kexp(key, 32, 16, rkey111)
-qalqan.Encrypt(data, rkey111, 32, 16, res)  // [255 247 218 248 163 247 226 11 36 110 25 52 4 11 163 120] - etalon encrypted data
-qalqan.DecryptOFB(res, rkey111, 32, 16, data2) // [16 17 34 51 68 85 102 119 136 153 170 187 204 221 238 255] - etalon decrypted data*/
-
 import (
 	"fmt"
 	"io"
@@ -82,22 +68,27 @@ func Kexp(key []byte, klen int, blen int, rkey []byte) {
 	addk := klen - 32
 	step := 0
 	s := KEXPSHIFT
-	for i := range 15 {
+
+	for i := 0; i < 15; i++ {
 		r0[i] = key[2*i]
 		r1[i] = key[2*i+1]
 	}
 	r0[15] = key[30]
 	r0[16] = key[31]
-	for r := range int(RNDS(uint32(klen))) {
-		for k := range blen + s {
+
+	nr := int(RNDS(uint32(klen)))
+	for r := 0; r < nr; r++ {
+		for k := 0; k < blen+s; k++ {
 			t0 := sb[r0[0]] + r0[1] + sb[r0[3]] + r0[7] + sb[r0[12]] + r0[16]
 			t1 := sb[r1[0]] + r1[3] + sb[r1[9]] + r1[12] + sb[r1[14]]
-			for i := range 14 {
+
+			for i := 0; i < 14; i++ {
 				r0[i] = r0[i+1]
 				r1[i] = r1[i+1]
 			}
 			r0[14] = r0[15]
 			r0[15] = r0[16]
+
 			if k >= s {
 				rkey[r*blen+k-s] = t0 + r1[4]
 				if step < addk {
@@ -109,10 +100,11 @@ func Kexp(key []byte, klen int, blen int, rkey []byte) {
 					step++
 				}
 			}
+
 			r0[16] = t0
 			r1[14] = t1
 		}
-		s = 0 // 0 -20, 1 - 53
+		s = 0
 	}
 }
 
@@ -120,7 +112,6 @@ func ROTL(x uint32, s uint32) uint32 {
 	s &= 31
 	return (x << s) | (x >> (32 - s))
 }
-
 func ROTL64(x uint64, s uint64) uint64 {
 	s &= 63
 	return (x << s) | (x >> (64 - s))
@@ -128,14 +119,13 @@ func ROTL64(x uint64, s uint64) uint64 {
 
 func Lin344(din, dout []uint32, c0 []uint32) {
 	if len(din) < 4 || len(dout) < 4 || len(c0) < 3 {
-		panic("Ошибка: недостаточный размер входных данных в Llin344")
+		panic("Lin344: bad input lengths")
 	}
 	dout[0] = din[0] ^ ROTL(din[1], c0[0]) ^ ROTL(din[2], c0[1]) ^ ROTL(din[3], c0[2])
 	dout[1] = din[1] ^ ROTL(din[2], c0[0]) ^ ROTL(din[3], c0[1]) ^ ROTL(dout[0], c0[2])
 	dout[2] = din[2] ^ ROTL(din[3], c0[0]) ^ ROTL(dout[0], c0[1]) ^ ROTL(dout[1], c0[2])
 	dout[3] = din[3] ^ ROTL(dout[0], c0[0]) ^ ROTL(dout[1], c0[1]) ^ ROTL(dout[2], c0[2])
 }
-
 func Lin384(din, dout []uint32, c1 []uint32) {
 	dout[0] = din[0] ^ ROTL(din[1], c1[0]) ^ ROTL(din[2], c1[1]) ^ ROTL(din[3], c1[2]) ^ ROTL(din[4], c1[3]) ^ ROTL(din[5], c1[4]) ^ ROTL(din[6], c1[5]) ^ ROTL(din[7], c1[6])
 	dout[1] = din[1] ^ ROTL(din[2], c1[0]) ^ ROTL(din[3], c1[1]) ^ ROTL(din[4], c1[2]) ^ ROTL(din[5], c1[3]) ^ ROTL(din[6], c1[4]) ^ ROTL(din[7], c1[5]) ^ ROTL(dout[0], c1[6])
@@ -146,7 +136,6 @@ func Lin384(din, dout []uint32, c1 []uint32) {
 	dout[6] = din[6] ^ ROTL(din[7], c1[0]) ^ ROTL(dout[0], c1[1]) ^ ROTL(dout[1], c1[2]) ^ ROTL(dout[2], c1[3]) ^ ROTL(dout[3], c1[4]) ^ ROTL(dout[4], c1[5]) ^ ROTL(dout[5], c1[6])
 	dout[7] = din[7] ^ ROTL(dout[0], c1[0]) ^ ROTL(dout[1], c1[1]) ^ ROTL(dout[2], c1[2]) ^ ROTL(dout[3], c1[3]) ^ ROTL(dout[4], c1[4]) ^ ROTL(dout[5], c1[5]) ^ ROTL(dout[6], c1[6])
 }
-
 func Lin388(din, dout []uint64, c2 []uint64) {
 	dout[0] = din[0] ^ ROTL64(din[1], c2[0]) ^ ROTL64(din[2], c2[1]) ^ ROTL64(din[3], c2[2]) ^ ROTL64(din[4], c2[3]) ^ ROTL64(din[5], c2[4]) ^ ROTL64(din[6], c2[5]) ^ ROTL64(din[7], c2[6])
 	dout[1] = din[1] ^ ROTL64(din[2], c2[0]) ^ ROTL64(din[3], c2[1]) ^ ROTL64(din[4], c2[2]) ^ ROTL64(din[5], c2[3]) ^ ROTL64(din[6], c2[4]) ^ ROTL64(din[7], c2[5]) ^ ROTL64(dout[0], c2[6])
@@ -161,41 +150,43 @@ func Lin388(din, dout []uint64, c2 []uint64) {
 func LinOp(d, r unsafe.Pointer, blocklen int) {
 	switch blocklen {
 	case 16:
-		Lin344((*[4]uint32)(d)[:], (*[4]uint32)(r)[:], []uint32{1, 17, 14}) // c0
+		Lin344((*[4]uint32)(d)[:], (*[4]uint32)(r)[:], []uint32{1, 17, 14})
 	case 32:
-		Lin384((*[8]uint32)(d)[:], (*[8]uint32)(r)[:], []uint32{3, 5, 11, 21, 16, 30, 19}) // c1
+		Lin384((*[8]uint32)(d)[:], (*[8]uint32)(r)[:], []uint32{3, 5, 11, 21, 16, 30, 19})
 	case 64:
-		Lin388((*[8]uint64)(d)[:], (*[8]uint64)(r)[:], []uint64{4, 0, 22, 27, 47, 4, 61}) // c2
+		Lin388((*[8]uint64)(d)[:], (*[8]uint64)(r)[:], []uint64{4, 0, 22, 27, 47, 4, 61})
 	default:
-		panic("unexpected block length")
+		panic("LinOp: unexpected block length")
 	}
 }
-
 func InvlinOp(d, r unsafe.Pointer, blocklen int) {
 	switch blocklen {
 	case 16:
-		Ilin344((*[4]uint32)(d)[:], (*[4]uint32)(r)[:], []uint32{1, 17, 14}) // c0
+		Ilin344((*[4]uint32)(d)[:], (*[4]uint32)(r)[:], []uint32{1, 17, 14})
 	case 32:
-		Ilin384((*[8]uint32)(d)[:], (*[8]uint32)(r)[:], []uint32{3, 5, 11, 21, 16, 30, 19}) // c1
+		Ilin384((*[8]uint32)(d)[:], (*[8]uint32)(r)[:], []uint32{3, 5, 11, 21, 16, 30, 19})
 	case 64:
-		Ilin388((*[8]uint64)(d)[:], (*[8]uint64)(r)[:], []uint64{4, 0, 22, 27, 47, 4, 61}) // c2
+		Ilin388((*[8]uint64)(d)[:], (*[8]uint64)(r)[:], []uint64{4, 0, 22, 27, 47, 4, 61})
 	default:
-		panic("unexpected block length")
+		panic("InvlinOp: unexpected block length")
 	}
 }
 
 func sBox(data, res []uint8, blen int, sb []byte) {
-	for i := range blen {
+	for i := 0; i < blen; i++ {
 		res[i] = sb[data[i]]
 	}
 }
-
+func InvsBox(data, res []uint8, blen int) {
+	for i := 0; i < blen; i++ {
+		res[i] = isb[data[i]]
+	}
+}
 func AddRkX(block, rkey []uint8, nr, blen int, res []uint8) {
-	for i := range blen {
+	for i := 0; i < blen; i++ {
 		res[i] = block[i] ^ rkey[nr*blen+i]
 	}
 }
-
 func AddRk(block, rkey []uint8, nr, blen int, res []uint8) {
 	tmp := uint16(block[0]) + uint16(rkey[blen*nr])
 	res[0] = uint8(tmp)
@@ -210,39 +201,39 @@ func AddRk(block, rkey []uint8, nr, blen int, res []uint8) {
 func Encrypt(data, rkey []uint8, klen int, blen int, res []uint8) {
 	var block [MAXBLOCKLEN]uint8
 	var block2 [MAXBLOCKLEN]uint8
+
 	AddRk(data, rkey, 0, blen, block[:])
 	sBox(block[:], block2[:], blen, sb[:])
 	LinOp(unsafe.Pointer(&block2[0]), unsafe.Pointer(&block[0]), blen)
-	for i := 1; i < int(RNDS(uint32(klen)))-1; i++ {
+
+	nr := int(RNDS(uint32(klen)))
+	for i := 1; i < nr-1; i++ {
 		AddRkX(block[:], rkey, i, blen, block2[:])
 		sBox(block2[:], block2[:], blen, sb[:])
 		LinOp(unsafe.Pointer(&block2[0]), unsafe.Pointer(&block[0]), blen)
 	}
-	AddRk(block[:], rkey, int(RNDS(uint32(klen)))-1, blen, res)
+	AddRk(block[:], rkey, nr-1, blen, res)
 }
 
 func InvAddRk(block, rkey []uint8, nr int, blen int) []uint8 {
-	res := make([]byte, BLOCKLEN)
-	var tmp int = int(block[0]) - int(rkey[blen*nr])
+	res := make([]byte, blen)
+	tmp := int(block[0]) - int(rkey[blen*nr])
 	res[0] = uint8(tmp)
-	tmp = tmp >> 8
+	tmp >>= 8
 	for i := 1; i < blen; i++ {
 		tmp += int(block[i]) - int(rkey[blen*nr+i])
 		res[i] = uint8(tmp)
-		tmp = tmp >> 8
+		tmp >>= 8
 	}
-	return res[:]
+	return res
 }
 
 func Ilin344(din, dout []uint32, c0 []uint32) {
-	{
-		dout[3] = din[3] ^ ROTL(din[0], c0[0]) ^ ROTL(din[1], c0[1]) ^ ROTL(din[2], c0[2])
-		dout[2] = din[2] ^ ROTL(dout[3], c0[0]) ^ ROTL(din[0], c0[1]) ^ ROTL(din[1], c0[2])
-		dout[1] = din[1] ^ ROTL(dout[2], c0[0]) ^ ROTL(dout[3], c0[1]) ^ ROTL(din[0], c0[2])
-		dout[0] = din[0] ^ ROTL(dout[1], c0[0]) ^ ROTL(dout[2], c0[1]) ^ ROTL(dout[3], c0[2])
-	}
+	dout[3] = din[3] ^ ROTL(din[0], c0[0]) ^ ROTL(din[1], c0[1]) ^ ROTL(din[2], c0[2])
+	dout[2] = din[2] ^ ROTL(dout[3], c0[0]) ^ ROTL(din[0], c0[1]) ^ ROTL(din[1], c0[2])
+	dout[1] = din[1] ^ ROTL(dout[2], c0[0]) ^ ROTL(dout[3], c0[1]) ^ ROTL(din[0], c0[2])
+	dout[0] = din[0] ^ ROTL(dout[1], c0[0]) ^ ROTL(dout[2], c0[1]) ^ ROTL(dout[3], c0[2])
 }
-
 func Ilin384(din, dout []uint32, c1 []uint32) {
 	dout[7] = din[7] ^ ROTL(din[0], c1[0]) ^ ROTL(din[1], c1[1]) ^ ROTL(din[2], c1[2]) ^ ROTL(din[3], c1[3]) ^ ROTL(din[4], c1[4]) ^ ROTL(din[5], c1[5]) ^ ROTL(din[6], c1[6])
 	dout[6] = din[6] ^ ROTL(dout[7], c1[0]) ^ ROTL(din[0], c1[1]) ^ ROTL(din[1], c1[2]) ^ ROTL(din[2], c1[3]) ^ ROTL(din[3], c1[4]) ^ ROTL(din[4], c1[5]) ^ ROTL(din[5], c1[6])
@@ -253,7 +244,6 @@ func Ilin384(din, dout []uint32, c1 []uint32) {
 	dout[1] = din[1] ^ ROTL(dout[2], c1[0]) ^ ROTL(dout[3], c1[1]) ^ ROTL(dout[4], c1[2]) ^ ROTL(dout[5], c1[3]) ^ ROTL(dout[6], c1[4]) ^ ROTL(dout[7], c1[5]) ^ ROTL(din[0], c1[6])
 	dout[0] = din[0] ^ ROTL(dout[1], c1[0]) ^ ROTL(dout[2], c1[1]) ^ ROTL(dout[3], c1[2]) ^ ROTL(dout[4], c1[3]) ^ ROTL(dout[5], c1[4]) ^ ROTL(dout[6], c1[5]) ^ ROTL(dout[7], c1[6])
 }
-
 func Ilin388(din, dout []uint64, c2 []uint64) {
 	dout[7] = din[7] ^ ROTL64(din[0], c2[0]) ^ ROTL64(din[1], c2[1]) ^ ROTL64(din[2], c2[2]) ^ ROTL64(din[3], c2[3]) ^ ROTL64(din[4], c2[4]) ^ ROTL64(din[5], c2[5]) ^ ROTL64(din[6], c2[6])
 	dout[6] = din[6] ^ ROTL64(dout[7], c2[0]) ^ ROTL64(din[0], c2[1]) ^ ROTL64(din[1], c2[2]) ^ ROTL64(din[2], c2[3]) ^ ROTL64(din[3], c2[4]) ^ ROTL64(din[4], c2[5]) ^ ROTL64(din[5], c2[6])
@@ -265,43 +255,39 @@ func Ilin388(din, dout []uint64, c2 []uint64) {
 	dout[0] = din[0] ^ ROTL64(dout[1], c2[0]) ^ ROTL64(dout[2], c2[1]) ^ ROTL64(dout[3], c2[2]) ^ ROTL64(dout[4], c2[3]) ^ ROTL64(dout[5], c2[4]) ^ ROTL64(dout[6], c2[5]) ^ ROTL64(dout[7], c2[6])
 }
 
-func InvsBox(data, res []uint8, blen int) { // 32 ops
-	for i := range blen {
-		res[i] = isb[data[i]]
-	}
-}
-
 func DecryptOFB(data []uint8, rkey []uint8, klen int, blen int, res []uint8) {
 	var block [MAXBLOCKLEN]uint8
 	var block2 [MAXBLOCKLEN]uint8
+
 	copy(block[:], InvAddRk(data, rkey, int(RNDS(uint32(klen))-1), blen))
 	for i := int(RNDS(uint32(klen))) - 2; i > 0; i-- {
-		InvlinOp(unsafe.Pointer(&block), unsafe.Pointer(&block2), blen)
+		InvlinOp(unsafe.Pointer(&block[0]), unsafe.Pointer(&block2[0]), blen)
 		InvsBox(block2[:], block2[:], blen)
 		AddRkX(block2[:], rkey, i, blen, block[:])
 	}
-	InvlinOp(unsafe.Pointer(&block), unsafe.Pointer(&block2), blen)
+	InvlinOp(unsafe.Pointer(&block[0]), unsafe.Pointer(&block2[0]), blen)
 	InvsBox(block2[:], block2[:], blen)
-	copy(res, InvAddRk(block2[:], rkey, 0, blen))
+	out := InvAddRk(block2[:], rkey, 0, blen)
+	copy(res, out)
 }
 
-/* Функция осуществляет дополнение нулями до значения кратного 16 */
-func myappend(buf []byte, len int) {
-	add_len := BLOCKLEN - len
-	if add_len == 0 {
-		buf[15] = 0x01
+/* дополнение нулями/маркерами до кратности 16 */
+func myappend(buf []byte, used int) {
+	add := BLOCKLEN - used
+	if add == 0 {
 		buf[0] = 0x80
 		for i := 1; i < BLOCKLEN-1; i++ {
 			buf[i] = 0x00
 		}
-	} else if add_len == 1 {
-		buf[15] = 0x81
+		buf[BLOCKLEN-1] = 0x01
+	} else if add == 1 {
+		buf[BLOCKLEN-1] = 0x81
 	} else {
-		buf[15] = 0x01
-		buf[len] = 0x80
-		for i := 1; i < add_len-1; i++ {
-			buf[len+i] = 0x00
+		buf[used] = 0x80
+		for i := 1; i < add-1; i++ {
+			buf[used+i] = 0x00
 		}
+		buf[BLOCKLEN-1] = 0x01
 	}
 }
 
@@ -311,8 +297,8 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 	plainBlock := make([]byte, BLOCKLEN)
 
 	copy(tmpBuf, iv)
-
 	total := 0
+
 	for {
 		n, err := io.ReadFull(ostream, plainBlock)
 		if err != nil {
@@ -332,7 +318,6 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 		for i := 0; i < BLOCKLEN; i++ {
 			streamBlock[i] ^= plainBlock[i]
 		}
-
 		if _, err := sstream.Write(streamBlock); err != nil {
 			panic(fmt.Errorf("write failed: %w", err))
 		}
@@ -345,183 +330,178 @@ func EncryptOFB_File(dataLen int, rKey []byte, iv []byte, ostream io.Reader, sst
 }
 
 func DecryptOFB_File(dataLen int, rKey []byte, iv []byte, istream io.Reader, ostream io.Writer) error {
-	tmpBuf := make([]byte, BLOCKLEN)
-	cipherBuf := make([]byte, BLOCKLEN)
-	clearBuf := make([]byte, BLOCKLEN)
-
-	Encrypt(iv, rKey, DEFAULT_KEY_LEN, BLOCKLEN, clearBuf)
-	copy(tmpBuf, clearBuf)
-
-	if _, err := io.ReadFull(istream, cipherBuf); err != nil {
-		return fmt.Errorf("failed to read first encrypted block: %w", err)
+	if dataLen%BLOCKLEN != 0 {
+		return fmt.Errorf("ciphertext length %d is not multiple of block size", dataLen)
 	}
+	nBlocks := dataLen / BLOCKLEN
 
-	for i := 0; i < BLOCKLEN; i++ {
-		clearBuf[i] ^= cipherBuf[i]
-	}
+	tmp := make([]byte, BLOCKLEN) // previous keystream
+	ks := make([]byte, BLOCKLEN)  // current keystream
+	c := make([]byte, BLOCKLEN)   // ciphertext block
+	p := make([]byte, BLOCKLEN)   // plaintext block
 
-	if _, err := ostream.Write(clearBuf); err != nil {
-		return fmt.Errorf("failed to write first decrypted block: %w", err)
-	}
+	copy(tmp, iv)
+	for b := 0; b < nBlocks; b++ {
+		Encrypt(tmp, rKey, DEFAULT_KEY_LEN, BLOCKLEN, ks)
+		copy(tmp, ks)
 
-	for i := BLOCKLEN; i < dataLen-(BLOCKLEN*2); i += BLOCKLEN {
-		Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, clearBuf)
-		copy(tmpBuf, clearBuf)
-
-		if _, err := io.ReadFull(istream, cipherBuf); err != nil {
-			return fmt.Errorf("failed to read ciphertext block: %w", err)
+		if _, err := io.ReadFull(istream, c); err != nil {
+			return fmt.Errorf("read ciphertext block %d: %w", b, err)
+		}
+		for i := 0; i < BLOCKLEN; i++ {
+			p[i] = ks[i] ^ c[i]
 		}
 
-		for j := 0; j < BLOCKLEN; j++ {
-			clearBuf[j] ^= cipherBuf[j]
-		}
-
-		if _, err := ostream.Write(clearBuf); err != nil {
-			return fmt.Errorf("failed to write decrypted data: %w", err)
-		}
-	}
-
-	Encrypt(tmpBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, clearBuf)
-	if _, err := io.ReadFull(istream, cipherBuf); err != nil {
-		return fmt.Errorf("failed to read last ciphertext block: %w", err)
-	}
-
-	for j := 0; j < BLOCKLEN; j++ {
-		clearBuf[j] ^= cipherBuf[j]
-	}
-
-	rest := Myremove(&clearBuf[0])
-	if rest != BLOCKLEN {
-		if _, err := ostream.Write(clearBuf[:rest]); err != nil {
-			return fmt.Errorf("failed to write final decrypted block: %w", err)
-		}
-	} else {
-		if _, err := ostream.Write(clearBuf); err != nil {
-			return fmt.Errorf("failed to write final decrypted block: %w", err)
+		if b == nBlocks-1 {
+			rest := Myremove(&p[0])
+			if rest != BLOCKLEN {
+				if _, err := ostream.Write(p[:rest]); err != nil {
+					return fmt.Errorf("write last block: %w", err)
+				}
+			} else {
+				if _, err := ostream.Write(p); err != nil {
+					return fmt.Errorf("write last block: %w", err)
+				}
+			}
+		} else {
+			if _, err := ostream.Write(p); err != nil {
+				return fmt.Errorf("write block %d: %w", b, err)
+			}
 		}
 	}
-
 	return nil
 }
 
 func Qalqan_Imit(dataLen uint64, rKey []byte, ostream io.Reader, imit []uint8) {
-	modLen := dataLen % BLOCKLEN
 	var buf [BLOCKLEN]uint8
-	var cypherbuf [BLOCKLEN]uint8
-	if modLen == 0 {
-		ostream.Read(buf[:BLOCKLEN])
-		Encrypt(buf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
-		for i := uint64(BLOCKLEN); i < dataLen; i += BLOCKLEN {
-			ostream.Read(buf[:BLOCKLEN])
-			for j := 0; j < BLOCKLEN; j++ {
-				cypherbuf[j] ^= buf[j]
-			}
-			Encrypt(cypherbuf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
-		}
-	} else if modLen != 0 {
-		ostream.Read(buf[:BLOCKLEN])
-		Encrypt(buf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
-		for i := uint64(BLOCKLEN); i < dataLen-modLen; i += BLOCKLEN {
-			ostream.Read(buf[:BLOCKLEN])
-			for j := 0; j < BLOCKLEN; j++ {
-				cypherbuf[j] ^= buf[j]
-			}
-			Encrypt(cypherbuf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
-		}
-		ostream.Read(buf[:modLen])
-		myappend(buf[:], int(modLen))
-		for j := 0; j < BLOCKLEN; j++ {
-			cypherbuf[j] ^= buf[j]
-		}
-		Encrypt(cypherbuf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
+	var acc [BLOCKLEN]uint8
+
+	readExact := func(dst []byte, n int) error {
+		_, err := io.ReadFull(ostream, dst[:n])
+		return err
 	}
-	copy(imit[:BLOCKLEN], cypherbuf[:BLOCKLEN])
+
+	if dataLen == 0 {
+		for i := 0; i < BLOCKLEN; i++ {
+			acc[i] = 0
+		}
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+		copy(imit[:BLOCKLEN], acc[:])
+		return
+	}
+
+	if dataLen >= BLOCKLEN {
+		_ = readExact(buf[:], BLOCKLEN)
+		Encrypt(buf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+	} else {
+		_ = readExact(buf[:], int(dataLen))
+		myappend(buf[:], int(dataLen))
+		for j := 0; j < BLOCKLEN; j++ {
+			acc[j] ^= buf[j]
+		}
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+		copy(imit[:BLOCKLEN], acc[:])
+		return
+	}
+
+	var i uint64
+	for i = BLOCKLEN; i+BLOCKLEN <= dataLen; i += BLOCKLEN {
+		_ = readExact(buf[:], BLOCKLEN)
+		for j := 0; j < BLOCKLEN; j++ {
+			acc[j] ^= buf[j]
+		}
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+	}
+
+	if tail := int(dataLen - i); tail > 0 {
+		_ = readExact(buf[:], tail)
+		myappend(buf[:], tail)
+		for j := 0; j < BLOCKLEN; j++ {
+			acc[j] ^= buf[j]
+		}
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+	}
+
+	copy(imit[:BLOCKLEN], acc[:BLOCKLEN])
 }
 
 func Qalqan_ImitData(dataLen uint64, rKey []byte, indata []uint8, imit []uint8) {
-	modLen := dataLen % BLOCKLEN
 	var buf [BLOCKLEN]uint8
-	var cypherbuf [BLOCKLEN]uint8
+	var acc [BLOCKLEN]uint8
 
-	if modLen == 0 {
-		copy(buf[:], indata[:BLOCKLEN])
-		Encrypt(buf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
-
-		for i := uint64(BLOCKLEN); i < dataLen; i += BLOCKLEN {
-			copy(buf[:], indata[i:i+BLOCKLEN])
-			for j := 0; j < BLOCKLEN; j++ {
-				cypherbuf[j] ^= buf[j]
-			}
-			Encrypt(cypherbuf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
+	if dataLen == 0 {
+		for i := 0; i < BLOCKLEN; i++ {
+			acc[i] = 0
 		}
-	} else {
-		copy(buf[:], indata[:BLOCKLEN])
-		Encrypt(buf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
-
-		var i uint64
-		for i = BLOCKLEN; i < dataLen-modLen; i += BLOCKLEN {
-			copy(buf[:], indata[i:i+BLOCKLEN])
-			for j := 0; j < BLOCKLEN; j++ {
-				cypherbuf[j] ^= buf[j]
-			}
-			Encrypt(cypherbuf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
-		}
-
-		copy(buf[:modLen], indata[i:i+modLen])
-		myappend(buf[:], int(modLen))
-		for j := 0; j < BLOCKLEN; j++ {
-			cypherbuf[j] ^= buf[j]
-		}
-		Encrypt(cypherbuf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, cypherbuf[:])
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+		copy(imit[:BLOCKLEN], acc[:])
+		return
 	}
 
-	copy(imit[:BLOCKLEN], cypherbuf[:BLOCKLEN])
+	if dataLen >= BLOCKLEN {
+		copy(buf[:], indata[:BLOCKLEN])
+		Encrypt(buf[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+	} else {
+		copy(buf[:], indata[:dataLen])
+		myappend(buf[:], int(dataLen))
+		for j := 0; j < BLOCKLEN; j++ {
+			acc[j] ^= buf[j]
+		}
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+		copy(imit[:BLOCKLEN], acc[:])
+		return
+	}
+
+	var i uint64
+	for i = BLOCKLEN; i+BLOCKLEN <= dataLen; i += BLOCKLEN {
+		copy(buf[:], indata[i:i+BLOCKLEN])
+		for j := 0; j < BLOCKLEN; j++ {
+			acc[j] ^= buf[j]
+		}
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+	}
+
+	if tail := int(dataLen - i); tail > 0 {
+		copy(buf[:tail], indata[i:i+uint64(tail)])
+		myappend(buf[:], tail)
+		for j := 0; j < BLOCKLEN; j++ {
+			acc[j] ^= buf[j]
+		}
+		Encrypt(acc[:], rKey, DEFAULT_KEY_LEN, BLOCKLEN, acc[:])
+	}
+
+	copy(imit[:BLOCKLEN], acc[:BLOCKLEN])
 }
 
 func Myremove(buf *uint8) int {
-	var i int
-	bufSlice := (*[BLOCKLEN]uint8)(unsafe.Pointer(buf))[:]
-	if bufSlice[BLOCKLEN-1] != 0x01 {
-		if bufSlice[BLOCKLEN-1] == 0x81 {
+	b := (*[BLOCKLEN]uint8)(unsafe.Pointer(buf))[:]
+	last := b[BLOCKLEN-1]
+	if last != 0x01 {
+		if last == 0x81 {
 			return BLOCKLEN - 1
-		} else {
-			return BLOCKLEN
 		}
+		return BLOCKLEN
 	}
-	for i = BLOCKLEN - 2; i >= 0 && bufSlice[i] == 0; i-- {
-		if bufSlice[i] != 0x80 {
-			return BLOCKLEN
-		}
+	i := BLOCKLEN - 2
+	for i >= 0 && b[i] == 0x00 {
+		i--
 	}
-	return i
+	if i >= 0 && b[i] == 0x80 {
+		return i
+	}
+	return BLOCKLEN
 }
 
 func CreateFileMetadata(userNumber byte, fileType byte, keyType byte, circleKeyNumber byte, sessionKeyNumber byte) [16]byte {
 	var metadata [16]byte
-
-	metadata[0] = 0x00             // Always 0
-	metadata[1] = userNumber       // User number (0-255)
-	metadata[2] = 0x04             // Constant value
-	metadata[3] = 0x20             // Constant value
-	metadata[4] = fileType         // File type (0x77 - file, 0x88 - photo, 0x66 - text, 0x55 - audio)
-	metadata[5] = keyType          // Key type (0 - circular, 1 - session)
-	metadata[6] = circleKeyNumber  // Circle key number
-	metadata[7] = sessionKeyNumber // Session key number
-	// Fill the remaining bytes (8-15) with zeros (already 0 by default)
+	metadata[0] = 0x00
+	metadata[1] = userNumber
+	metadata[2] = 0x04
+	metadata[3] = 0x20
+	metadata[4] = fileType
+	metadata[5] = keyType
+	metadata[6] = circleKeyNumber
+	metadata[7] = sessionKeyNumber
 
 	return metadata
 }
-
-/*func DecryptECB_data(dataLen int, rKey []byte, ostream io.Reader, res []byte) {
-	cipherBuf := make([]byte, BLOCKLEN)
-	clearBuf := make([]byte, BLOCKLEN)
-
-	for i := 0; i < dataLen; i += BLOCKLEN {
-		ostream.Read(cipherBuf)
-		Decrypt(cipherBuf, rKey, DEFAULT_KEY_LEN, BLOCKLEN, cipherBuf)
-		for j := 0; j < BLOCKLEN; j++ {
-			res[i+j] = clearBuf[j]
-		}
-	}
-
-}*/
