@@ -1,8 +1,12 @@
 package qalqan
 
 import (
+	"bufio"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"unsafe"
 )
 
@@ -492,7 +496,7 @@ func Myremove(buf *uint8) int {
 	return BLOCKLEN
 }
 
-func CreateFileMetadata(userNumber byte, fileType byte, keyType byte, circleKeyNumber byte, sessionKeyNumber byte) [16]byte {
+func CreateFileMetadata(userNumber, fileType, keyType, circleKeyNumber, sessionKeyNumber byte) [16]byte {
 	var metadata [16]byte
 	metadata[0] = 0x00
 	metadata[1] = userNumber
@@ -504,4 +508,73 @@ func CreateFileMetadata(userNumber byte, fileType byte, keyType byte, circleKeyN
 	metadata[7] = sessionKeyNumber
 
 	return metadata
+}
+
+func sanitizeName(name string) (string, error) {
+	base := filepath.Base(name)
+	if base == "." || base == "/" || base == "\\" || base == "" {
+		return "", errors.New("invalid file name")
+	}
+	if len([]byte(base)) > 255 {
+		return "", errors.New("file name too long")
+	}
+	return base, nil
+}
+
+func WriteHeader(w io.Writer, metadata [16]byte, origName string, origSize uint64) error {
+	bw := bufio.NewWriter(w)
+
+	if _, err := bw.Write(metadata[:]); err != nil {
+		return err
+	}
+	name, err := sanitizeName(origName)
+	if err != nil {
+		return err
+	}
+	nameBytes := []byte(name)
+	if len(nameBytes) > 0xFFFF {
+		return errors.New("file name too long")
+	}
+	var nameLen uint16 = uint16(len(nameBytes))
+	if err := binary.Write(bw, binary.LittleEndian, nameLen); err != nil {
+		return err
+	}
+	if _, err := bw.Write(nameBytes); err != nil {
+		return err
+	}
+	if err := binary.Write(bw, binary.LittleEndian, origSize); err != nil {
+		return err
+	}
+	return bw.Flush()
+}
+
+func ReadHeader(r io.Reader) (meta [16]byte, origName string, origSize uint64, headerLen int, err error) {
+	br := bufio.NewReader(r)
+
+	if _, err = io.ReadFull(br, meta[:]); err != nil {
+		return
+	}
+	headerLen += 16
+
+	var nameLen uint16
+	if err = binary.Read(br, binary.LittleEndian, &nameLen); err != nil {
+		return
+	}
+	headerLen += 2
+
+	if nameLen > 0 {
+		nameBytes := make([]byte, nameLen)
+		if _, err = io.ReadFull(br, nameBytes); err != nil {
+			return
+		}
+		origName = string(nameBytes)
+		headerLen += int(nameLen)
+	}
+
+	if err = binary.Read(br, binary.LittleEndian, &origSize); err != nil {
+		return
+	}
+	headerLen += 8
+
+	return
 }

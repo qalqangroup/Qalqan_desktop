@@ -5,6 +5,7 @@ import (
 	"bytes"
 	crand "crypto/rand"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"image"
@@ -47,14 +48,43 @@ func animateResize(window fyne.Window, newSize fyne.Size) {
 	}()
 }
 
-func useAndDeleteSessionKey(sessionKeyNumber int) []uint8 {
+func cloneSessionKeys(src [][100][qalqan.DEFAULT_KEY_LEN]byte) [][100][qalqan.DEFAULT_KEY_LEN]byte {
+	dst := make([][100][qalqan.DEFAULT_KEY_LEN]byte, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func getSessionKeyExact(idx int) []uint8 {
+	if len(session_keys_ro) == 0 || idx < 0 || idx >= 100 {
+		fmt.Println("Invalid session key index")
+		return nil
+	}
+	key := session_keys_ro[0][idx][:qalqan.DEFAULT_KEY_LEN]
+
+	allZero := true
+	for j := 0; j < qalqan.DEFAULT_KEY_LEN; j++ {
+		if key[j] != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		fmt.Printf("Session key %d is zero in RO copy. Reload keys file.\n", idx)
+		return nil
+	}
+	rkey := make([]uint8, qalqan.EXPKLEN)
+	qalqan.Kexp(key, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rkey)
+	return rkey
+}
+
+func useAndDeleteSessionKey(sessionKeyNumber int) ([]uint8, int) {
 	if len(session_keys) == 0 {
 		fmt.Println("No session keys available")
-		return nil
+		return nil, -1
 	}
 	if sessionKeyNumber < 0 || sessionKeyNumber >= len(session_keys[0]) {
 		fmt.Println("Invalid session key index")
-		return nil
+		return nil, -1
 	}
 
 	idx := sessionKeyNumber
@@ -77,7 +107,7 @@ func useAndDeleteSessionKey(sessionKeyNumber int) []uint8 {
 	if !found {
 		session_keys = session_keys[1:]
 		fmt.Println("No session keys available")
-		return nil
+		return nil, -1
 	}
 
 	key := session_keys[0][idx][:qalqan.DEFAULT_KEY_LEN]
@@ -101,7 +131,71 @@ func useAndDeleteSessionKey(sessionKeyNumber int) []uint8 {
 		session_keys = session_keys[1:]
 	}
 
-	return rkey
+	return rkey, idx
+}
+
+func baseName(path string) string {
+	b := filepath.Base(path)
+	if b == "." || b == "/" || b == "\\" {
+		return "file"
+	}
+	return b
+}
+
+func writeNameHeader(buf *bytes.Buffer, name string, size uint64) error {
+	nb := []byte(name)
+	if len(nb) > 255 {
+		nb = nb[:255]
+	}
+	if err := binary.Write(buf, binary.LittleEndian, uint16(len(nb))); err != nil {
+		return err
+	}
+	if _, err := buf.Write(nb); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.LittleEndian, size); err != nil {
+		return err
+	}
+	return nil
+}
+
+func readNameHeader(data []byte, offset int) (string, uint64, int, error) {
+	if len(data) < offset+2 {
+		return "", 0, 0, fmt.Errorf("no name header")
+	}
+	nameLen := int(binary.LittleEndian.Uint16(data[offset : offset+2]))
+	pos := offset + 2
+
+	if nameLen < 0 || len(data) < pos+nameLen+8 {
+		return "", 0, 0, fmt.Errorf("truncated name header")
+	}
+	name := string(data[pos : pos+nameLen])
+	pos += nameLen
+
+	size := binary.LittleEndian.Uint64(data[pos : pos+8])
+	pos += 8
+
+	return name, size, pos - offset, nil
+}
+
+func countRemainingSessionKeys() int {
+	if len(session_keys) == 0 {
+		return 0
+	}
+	cnt := 0
+	for i := 0; i < 100; i++ {
+		zero := true
+		for j := 0; j < qalqan.DEFAULT_KEY_LEN; j++ {
+			if session_keys[0][i][j] != 0 {
+				zero = false
+				break
+			}
+		}
+		if !zero {
+			cnt++
+		}
+	}
+	return cnt
 }
 
 func useAndDeleteCircleKey(circleKeyNumber int) []uint8 {
@@ -109,7 +203,6 @@ func useAndDeleteCircleKey(circleKeyNumber int) []uint8 {
 		fmt.Println("Invalid circle key index")
 		return nil
 	}
-	// при желании можно проверить, что ключ не весь из нулей
 	key := circle_keys[circleKeyNumber][:qalqan.DEFAULT_KEY_LEN]
 	rkey := make([]uint8, qalqan.EXPKLEN)
 	qalqan.Kexp(key, qalqan.DEFAULT_KEY_LEN, qalqan.BLOCKLEN, rkey)
@@ -138,6 +231,7 @@ func roundedRect(width, height int, radius int, bgColor color.Color) image.Image
 }
 
 var session_keys [][100][qalqan.DEFAULT_KEY_LEN]byte
+var session_keys_ro [][100][qalqan.DEFAULT_KEY_LEN]byte
 var circle_keys [10][qalqan.DEFAULT_KEY_LEN]byte
 var rimitkey []byte
 var selectedKeyType string = "Circular"
@@ -160,7 +254,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 	selectedLanguage.SetSelected("EN")
 	selectedLanguage.PlaceHolder = "Select language"
 
-		iconTransition, err := fyne.LoadResourceFromPath("assets/messaging.png")
+	iconTransition, err := fyne.LoadResourceFromPath("assets/messaging.png")
 	if err != nil {
 		fmt.Println("Ошибка загрузки иконки:", err)
 		iconTransition = theme.CancelIcon()
@@ -226,7 +320,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 	})
 	bgKeysLeft.SetMinSize(fyne.NewSize(170, 40))
 
-	keysLeftEntry := widget.NewLabel("Keys left")
+	keysLeftEntry := widget.NewLabel("0")
 
 	smallKeysLeftEntry := container.NewStack(bgKeysLeft, container.NewCenter(keysLeftEntry))
 
@@ -253,7 +347,6 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 
 		switch selectSource.Selected {
 		case "File":
-			keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
 					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error opening file: " + err.Error(), Style: widget.RichTextStyleInline}}
@@ -306,12 +399,17 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 					return
 				}
 
+				session_keys = nil
 				circle_keys = [10][qalqan.DEFAULT_KEY_LEN]byte{}
 				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
 				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
+				session_keys_ro = cloneSessionKeys(session_keys)
+
 				fmt.Println("Session keys loaded successfully")
 				dialog.ShowInformation("Success", "Keys loaded successfully!", myWindow)
-				sessionKeyCount = 100
+
+				sessionKeyCount = countRemainingSessionKeys()
+				keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 
 				defer func() {
 					if r := recover(); r != nil {
@@ -320,11 +418,11 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 					}
 				}()
 			}, myWindow)
+
 			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
 			fileDialog.Show()
 
 		case "Key":
-			keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 			fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 				if err != nil {
 					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error opening file: " + err.Error(), Style: widget.RichTextStyleInline}}
@@ -377,12 +475,17 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 					return
 				}
 
+				session_keys = nil
 				circle_keys = [10][qalqan.DEFAULT_KEY_LEN]byte{}
 				qalqan.LoadCircleKeys(data, ostream, rKey, &circle_keys)
 				qalqan.LoadSessionKeys(data, ostream, rKey, &session_keys)
+				session_keys_ro = cloneSessionKeys(session_keys)
+
 				fmt.Println("Session keys loaded successfully")
 				dialog.ShowInformation("Success", "Keys loaded successfully!", myWindow)
-				sessionKeyCount = 100
+
+				sessionKeyCount = countRemainingSessionKeys()
+				keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 
 				defer func() {
 					if r := recover(); r != nil {
@@ -637,6 +740,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				var fileType byte
 				path := reader.URI().Path()
 				ext := filepath.Ext(path)
+
 				switch strings.ToLower(ext) {
 				case ".jpg", ".jpeg", ".png", ".bmp", ".gif":
 					fileType = 0x88
@@ -644,7 +748,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 					fileType = 0x66
 				case ".mp3", ".wav", ".ogg":
 					fileType = 0x55
-				case ".doc", ".pdf", ".bin":
+				case ".doc", ".docx", ".pdf", ".bin":
 					fileType = 0x77
 				default:
 					fileType = 0x00
@@ -662,7 +766,13 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 					rKey = useAndDeleteCircleKey(circleKeyNumber)
 				case "Session":
 					keyType = 0x01
-					rKey = useAndDeleteSessionKey(sessionKeyNumber)
+					var usedIdx int
+					rKey, usedIdx = useAndDeleteSessionKey(sessionKeyNumber)
+					if rKey == nil {
+						dialog.ShowError(fmt.Errorf("no session key available for encryption"), myWindow)
+						return
+					}
+					sessionKeyNumber = usedIdx
 				default:
 					dialog.ShowError(fmt.Errorf("invalid key type selected: %s", selectedKeyType), myWindow)
 					return
@@ -682,6 +792,14 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				metaDataImit := make([]byte, qalqan.BLOCKLEN)
 				qalqan.Qalqan_Imit(uint64(len(metaData)), rimitkey, bytes.NewReader(metaData[:]), metaDataImit)
 				writeBuf.Write(metaDataImit)
+
+				origName := baseName(path)
+				origSize := uint64(len(data))
+				if err := writeNameHeader(writeBuf, origName, origSize); err != nil {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Header write error: " + err.Error(), Style: widget.RichTextStyleInline}}
+					logs.Refresh()
+					return
+				}
 
 				writeBuf.Write(iv)
 
@@ -713,18 +831,19 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 						return
 					}
 
-					if selectedKeyType == "Session" && sessionKeyCount > 0 {
-						sessionKeyCount--
-						keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
-					}
+					sessionKeyCount = countRemainingSessionKeys()
+					keysLeftEntry.SetText(fmt.Sprintf("%d", sessionKeyCount))
 
 					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "File successfully encrypted and saved!", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 				}, myWindow)
 
-				saveDialog.SetFileName("encrypted_file.bin")
+				ts := time.Now().Format("2006-01-02_15-04-05")
+				saveDialog.SetFileName(ts + ".qlq")
+				saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".qlq"}))
 				saveDialog.Show()
 			}, myWindow)
+
 			fileDialog.Show()
 		},
 	)
@@ -739,7 +858,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 		"Decrypt a file",
 		iconDecrypt,
 		func() {
-			if len(session_keys) == 0 {
+			if len(session_keys_ro) == 0 {
 				dialog.ShowError(fmt.Errorf("please load the encryption keys first"), myWindow)
 				return
 			}
@@ -794,6 +913,7 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 					logs.Refresh()
 					return
 				}
+
 				userNumber := fileInfo[1]
 				_ = userNumber
 				fileType := fileInfo[4]
@@ -805,7 +925,12 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 				case 0x00:
 					rKey = useAndDeleteCircleKey(circleKeyNumber)
 				case 0x01:
-					rKey = useAndDeleteSessionKey(sessionKeyNumber)
+					rKey = getSessionKeyExact(sessionKeyNumber)
+
+					if rKey == nil {
+						dialog.ShowError(fmt.Errorf("session key %d not available. Reload the keys file and try again", sessionKeyNumber), myWindow)
+						return
+					}
 				default:
 					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: fmt.Sprintf("Error: unknown key type 0x%X", keyType), Style: widget.RichTextStyleInline}}
 					logs.Refresh()
@@ -817,34 +942,34 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 					return
 				}
 
-				defer func() {
-					if r := recover(); r != nil {
-						logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Decryption failed: " + fmt.Sprintf("%v", r), Style: widget.RichTextStyleInline}}
-						logs.Refresh()
-					}
-				}()
+				pos := 2 * qalqan.BLOCKLEN
+				origName, origSize, hdrLen, hdrErr := readNameHeader(data, pos)
+				_ = origSize
+				if hdrErr == nil {
+					pos += hdrLen
+				}
+				if len(data) < pos+qalqan.BLOCKLEN {
+					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Invalid file: not enough data for IV.", Style: widget.RichTextStyleInline}}
+					logs.Refresh()
+					return
+				}
+				ivDecr := data[pos : pos+qalqan.BLOCKLEN]
+				pos += qalqan.BLOCKLEN
 
-				start := 3 * qalqan.BLOCKLEN
 				end := len(data) - qalqan.BLOCKLEN
-				if end <= start {
+				if end < pos {
 					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Error: Not enough data to decrypt!", Style: widget.RichTextStyleInline}}
 					logs.Refresh()
 					return
 				}
+				trimmedData := data[pos:end]
 
 				sstream := &bytes.Buffer{}
-				trimmedData := data[start:end]
-
-				thirdBlockStart := 2 * qalqan.BLOCKLEN
-				thirdBlockEnd := thirdBlockStart + qalqan.BLOCKLEN
-				ivDecr := data[thirdBlockStart:thirdBlockEnd]
-
 				if err := qalqan.DecryptOFB_File(len(trimmedData), rKey, ivDecr, bytes.NewReader(trimmedData), sstream); err != nil {
 					logs.Segments = append(logs.Segments, &widget.TextSegment{Text: "Decryption failed: " + err.Error(), Style: widget.RichTextStyleInline})
 					logs.Refresh()
 					return
 				}
-
 				logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Style: widget.RichTextStyleInline}}
 				logs.Refresh()
 
@@ -866,30 +991,33 @@ func InitUI(myApp fyne.App, myWindow fyne.Window) {
 						logs.Refresh()
 						return
 					}
-
 					logs.Segments = append(logs.Segments, &widget.TextSegment{Text: "The file has been successfully decrypted and saved!", Style: widget.RichTextStyleInline})
 					logs.Refresh()
 				}, myWindow)
 
-				switch fileType {
-				case 0x00, 0x77:
-					saveDialog.SetFileName("File_" + time.Now().Format("2006-01-02_15-04") + ".bin")
-				case 0x88:
-					saveDialog.SetFileName("Image_" + time.Now().Format("2006-01-02_15-04") + ".jpg")
-				case 0x66:
-					saveDialog.SetFileName("Text_" + time.Now().Format("2006-01-02_15-04") + ".txt")
-				case 0x55:
-					saveDialog.SetFileName("Audio_" + time.Now().Format("2006-01-02_15-04") + ".mp3")
-				default:
-					logs.Segments = []widget.RichTextSegment{&widget.TextSegment{Text: "Unknown file type: 0x" + fmt.Sprintf("%X", fileType), Style: widget.RichTextStyleInline}}
-					logs.Refresh()
-					return
+				if origName != "" {
+					saveDialog.SetFileName(origName)
+				} else {
+					switch fileType {
+					case 0x00:
+						saveDialog.SetFileName("File_" + time.Now().Format("2006-01-02_15-04") + ".bin")
+					case 0x88:
+						saveDialog.SetFileName("Image_" + time.Now().Format("2006-01-02_15-04") + ".jpg")
+					case 0x66:
+						saveDialog.SetFileName("Text_" + time.Now().Format("2006-01-02_15-04") + ".txt")
+					case 0x77:
+						saveDialog.SetFileName("Document_" + time.Now().Format("2006-01-02_15-04") + ".doc")
+					case 0x55:
+						saveDialog.SetFileName("Audio_" + time.Now().Format("2006-01-02_15-04") + ".mp3")
+					default:
+						saveDialog.SetFileName("File_" + time.Now().Format("2006-01-02_15-04") + ".bin")
+					}
 				}
-
 				saveDialog.Show()
+
 			}, myWindow)
 
-			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".bin"}))
+			fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".qlq"}))
 			fileDialog.Show()
 		},
 	)
